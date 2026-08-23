@@ -32,27 +32,67 @@ const Importer = (() => {
      vengono confrontate in forma "pulita" (minuscolo, senza accenti,
      spazi/underscore normalizzati) contro questi alias.
      ------------------------------------------------------------ */
+  // NOTA (Sprint 2.5): 'name' accetta sia una colonna "Nome" contenente
+  // solo il nome proprio (formato vecchio, con "Cognome" separato) sia una
+  // colonna "Nome" contenente nome+cognome insieme, come nel listone reale
+  // di Fantacalcio-Online (es. "MARTINEZ Lautaro"). La distinzione avviene
+  // a valle in DataModel.normalize, in base alla presenza o meno di una
+  // colonna "surname" riconosciuta: se manca, "name" viene trattato come
+  // nome completo e scomposto automaticamente (vedi splitNameFromFull).
   const COLUMN_ALIASES = {
     id: ['id', 'id esterno', 'codice', 'player id', 'code'],
-    name: ['nome', 'name'],
+    name: ['nome', 'name', 'nominativo', 'giocatore', 'player'],
     surname: ['cognome', 'surname', 'last name'],
     team: ['squadra', 'team', 'club'],
-    role: ['ruolo', 'role', 'r', 'ruolo classic', 'rm'],
-    quotation: ['quotazione', 'qt', 'qta', 'quotazione classic', 'quotazione attuale', 'fvm', 'prezzo', 'valore'],
-    rating: ['rating', 'fantaindex rating', 'fantaindex_rating', 'rating fantaindex', 'fantaindex'],
-    ownership: ['titolarita', 'titolarita fantaindex', 'fantaindex titolarita', 'fantaindex_titolarita', 'presenza', 'titolarita %'],
-    age: ['eta', 'age', 'anni']
+    role: ['ruolo standard', 'ruolo', 'role', 'r', 'ruolo classic', 'rm'],
+    roleTrequartista: ['ruolo trequartista', 'trequartista'],
+    roleFantacalcioIt: ['ruolo fantacalcio it', 'ruolo fantacalcioit'],
+    posizione: ['posizione', 'position', 'pos'],
+    quotation: ['kapitals', 'quotazione', 'qt', 'qta', 'quotazione classic', 'quotazione attuale', 'quotazione ufficiale', 'fvm', 'prezzo', 'valore', 'q'],
+    rating: ['rat', 'rating', 'fantaindex rating', 'fantaindex_rating', 'rating fantaindex', 'fantaindex'],
+    potential: ['pot', 'potenziale', 'potential'],
+    ownership: ['is%', 'titolarita', 'titolarita fantaindex', 'fantaindex titolarita', 'fantaindex_titolarita', 'presenza', 'titolarita%'],
+    age: ['eta', 'age', 'anni'],
+    bonusAttesi: ['bonus', 'bonus attesi']
   };
-  const REQUIRED_FIELDS = ['name', 'surname', 'team', 'role', 'quotation'];
+  // Campi obbligatori per considerare valido un giocatore del listone
+  // Classic. 'surname' NON e' qui: nel formato reale non esiste come
+  // colonna separata, viene derivato da 'name' (vedi nota sopra).
+  const REQUIRED_FIELDS = ['name', 'team', 'role', 'quotation'];
+  // Ordine e etichette usate nell'anteprima di importazione.
   const FIELD_LABELS = {
-    id: 'ID', name: 'Nome', surname: 'Cognome', team: 'Squadra', role: 'Ruolo',
-    quotation: 'Quotazione', rating: 'Rating', ownership: 'Titolarità', age: 'Età'
+    id: 'ID',
+    name: 'Nome completo',
+    team: 'Squadra',
+    role: 'Ruolo Classic',
+    quotation: 'Quotazione',
+    rating: 'Rating',
+    potential: 'Potenziale',
+    ownership: 'Titolarità',
+    age: 'Età',
+    bonusAttesi: 'Bonus attesi',
+    posizione: 'Posizione',
+    roleTrequartista: 'Ruolo trequartista',
+    roleFantacalcioIt: 'Ruolo Fantacalcio.it'
   };
 
+  // Normalizza un'intestazione di colonna per il matching contro gli alias:
+  // rimuove caratteri invisibili/NBSP tipici di export Excel, minuscolizza,
+  // toglie accenti, uniforma varianti di apostrofo, sostituisce punti e
+  // underscore con spazi, ed elimina lo spazio prima di "%" (cosi'
+  // "IS %" e "IS%" diventano equivalenti). Questo permette di riconoscere
+  // automaticamente intestazioni come "ETA'", "ETA’", "ETA" o "RUOLO
+  // STANDARD" / "ruolo standard" come la stessa colonna.
   function cleanHeader(h) {
-    return (h || '').toString().trim().toLowerCase()
+    return (h || '').toString()
+      .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ')
+      .trim().toLowerCase()
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/[_.]+/g, ' ').replace(/\s+/g, ' ').trim();
+      .replace(/['’‘`´]/g, '')
+      .replace(/[_.]+/g, ' ')
+      .replace(/\s+%/g, '%')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   // Dato un elenco di intestazioni grezze (come appaiono nel file), calcola
@@ -191,12 +231,36 @@ const Importer = (() => {
     const recognized = Object.keys(columnMap).filter(f => columnMap[f] !== null);
     const missingRequired = requiredForMode.filter(f => columnMap[f] === null);
 
+    // Quante colonne SORGENTI del file (non campi interni) sono state
+    // effettivamente riconosciute - es. "12 / 12" quando ogni intestazione
+    // reale del listone e' stata mappata su un campo interno noto.
+    const usedRawHeaders = new Set(Object.values(columnMap).filter(v => v !== null && v !== undefined));
+    const recognizedHeadersCount = usedRawHeaders.size;
+    const totalHeadersCount = headers.length;
+
+    // Conteggio record validi/non validi (solo per il listone: nome
+    // completo + squadra + ruolo + quotazione). Non persiste nulla,
+    // serve solo a mostrare un'anteprima accurata prima della conferma.
+    let validCount = records.length;
+    let invalidCount = 0;
+    if (mode !== 'indices') {
+      validCount = 0;
+      mappedRecords.forEach(r => {
+        const p = DataModel.normalize(r);
+        if (DataModel.computeValidity(p)) validCount++; else invalidCount++;
+      });
+    }
+
     return {
       fileName: file.name,
       totalCount: records.length,
       columnMap,
       recognized,
       missingRequired,
+      recognizedHeadersCount,
+      totalHeadersCount,
+      validCount,
+      invalidCount,
       sampleRows: mappedRecords.slice(0, 5),
       mappedRecords
     };
@@ -215,7 +279,15 @@ const Importer = (() => {
     mappedRecords.forEach((r, idx) => {
       try {
         const p = DataModel.normalize(r, existingIndex, seenInThisBatch);
-        if (!p.name && !p.surname) { errors.push(`Riga ${idx + 2}: nome/cognome mancanti, saltata.`); return; }
+        const rowIssues = [];
+        if (!p.fullName) rowIssues.push('nome mancante');
+        if (!p.team) rowIssues.push('squadra mancante');
+        if (!p.role || p.role === 'N/D') rowIssues.push('ruolo mancante/non riconosciuto');
+        if (p.quotation === null) rowIssues.push('quotazione mancante');
+        if (rowIssues.length) {
+          errors.push(`Riga ${idx + 2}: record non valido (${rowIssues.join(', ')}), saltata.`);
+          return;
+        }
         normalized.push(p);
       } catch (e) {
         errors.push(`Riga ${idx + 2}: errore di parsing (${e.message}).`);

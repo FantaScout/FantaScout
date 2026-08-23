@@ -6,7 +6,11 @@
 const App = (() => {
   let config = Storage.getConfig();
   let players = []; // enriched: remoto + personale + indici calcolati
-  let playersFilterState = { role: '', team: '', qMin: '', qMax: '', ownMin: '', ratingMin: '', search: '', favOnly: false, promotedOnly: false, revelationOnly: false };
+  // playersFilterState.filters: elenco di filtri avanzati combinabili (AND),
+  // vedi FILTER_FIELDS/OPERATORS in config.js e la logica in filters.js.
+  // I filtri rapidi (Ruolo, ⭐ Preferiti) scrivono/tolgono voci in questo
+  // stesso elenco, cosi' restano sempre compatibili con quelli avanzati.
+  let playersFilterState = { search: '', filters: [], quickPromoted: false, quickRevelation: false };
   let auctionFilterState = { role: '', hideBought: true, search: '' };
   let sortState = { players: { col: 'quotation', dir: 'desc' }, favorites: { col: 'quotation', dir: 'desc' }, auction: { col: 'quotation', dir: 'desc' } };
   let currentScoutingTab = 'revelations';
@@ -18,7 +22,28 @@ const App = (() => {
     bindNav();
     bindUpdateButtons();
     bindModals();
+    bindGlobalInfoButtons();
     renderAll();
+  }
+
+  // Delega globale per i pulsanti "?" di spiegazione colonna (tooltip):
+  // le tabelle vengono ricreate ad ogni render, quindi conviene un unico
+  // listener sul documento invece di ri-bindare ogni volta.
+  function bindGlobalInfoButtons() {
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-info]');
+      if (!btn) return;
+      e.stopPropagation();
+      showInfo(btn.dataset.info);
+    });
+  }
+
+  function showInfo(key) {
+    const t = TOOLTIPS[key];
+    if (!t) return;
+    document.getElementById('infoTitle').textContent = t.title;
+    document.getElementById('infoBody').innerHTML = `<p>${escapeHtml(t.body)}</p>`;
+    document.getElementById('infoModal').classList.remove('hidden');
   }
 
   function seedIfEmpty() {
@@ -70,6 +95,12 @@ const App = (() => {
   }
 
   /* ---------------- PLAYERS TABLE (shared renderer) ---------------- */
+  // Badge "⚠️ provvisorio" accanto ai prezzi: il modello verra'
+  // riprogettato nello Sprint 3 (vedi REGOLA FONDAMENTALE, Sprint 2.6).
+  function provisionalBadge() {
+    return ' <span class="badge-provisional" title="Valutazione provvisoria: modello prezzi in revisione (Sprint 3)">⚠️</span>';
+  }
+
   function playerRow(p, opts) {
     opts = opts || {};
     const c = p.calc;
@@ -81,26 +112,34 @@ const App = (() => {
       <td>${escapeHtml(p.team)}</td>
       <td class="num">${fmtNum(p.quotation)}</td>
       <td class="num">${fmtNum(p.rating)}</td>
+      <td class="num col-secondary">${fmtNum(p.potential)}</td>
       <td class="num">${p.ownership !== null ? p.ownership + '%' : '<span class="na">N/D</span>'}</td>
-      <td class="num">${fmtNum(c.idealPrice)}</td>
-      <td class="num">${fmtNum(c.maxBid)}
+      <td class="num col-secondary">${fmtNum(p.age)}</td>
+      <td class="num col-secondary">${fmtNum(p.bonusAttesi)}</td>
+      <td class="num">${fmtNum(c.idealPrice)}${c.idealPrice !== null ? provisionalBadge() : ''}</td>
+      <td class="num">${fmtNum(c.maxBid)}${c.maxBid !== null ? provisionalBadge() : ''}
         <button class="btn-tooltip" data-tooltip="${escapeAttr(p.id)}" title="Come viene calcolato?">?</button>
       </td>
       <td>${valueBadge}</td>
-      <td class="num">${p.personal.personalNote ? '📝' : ''}</td>
+      <td class="num col-secondary">${p.personal.personalNote ? '📝' : ''}</td>
       ${opts.showBuy ? `<td>${p.personal.purchased ? '✅ Tuo' : `<button class="btn-buy" data-buy="${escapeAttr(p.id)}">💰 Acquista</button>`}</td>` : ''}
     </tr>`;
   }
 
-  function tableHeader(opts) {
+  // tableId: chiave in sortState ('players' | 'favorites' | 'auction'),
+  // usata per mostrare la freccia ↑/↓ sulla colonna attualmente ordinata.
+  function tableHeader(tableId, opts) {
     opts = opts || {};
-    const cols = [
-      ['', ''], ['Giocatore', 'fullName'], ['Ruolo', 'role'], ['Squadra', 'team'],
-      ['Quot.', 'quotation'], ['Rating', 'rating'], ['Titol.', 'ownership'],
-      ['Ideale', 'idealPrice'], ['Massimo', 'maxBid'], ['Valore', 'valueIndex'], ['Note', '']
-    ];
-    if (opts.showBuy) cols.push(['Asta', '']);
-    return '<tr>' + cols.map(([label, key]) => `<th ${key ? `data-sort="${key}"` : ''}>${label}</th>`).join('') + '</tr>';
+    const cols = COLUMN_DEFS.slice();
+    if (opts.showBuy) cols.push({ key: 'auction', label: 'Asta', sort: null });
+    const state = sortState[tableId] || {};
+    return '<tr>' + cols.map(c => {
+      let label = escapeHtml(c.label);
+      if (c.sort && state.col === c.sort) label += state.dir === 'asc' ? ' ↑' : ' ↓';
+      const infoBtn = c.info ? ` <button class="info-btn" data-info="${c.info}" title="Cosa significa?">?</button>` : '';
+      const cls = c.secondary ? ' class="col-secondary"' : '';
+      return `<th ${c.sort ? `data-sort="${c.sort}"` : ''}${cls}>${label}${infoBtn}</th>`;
+    }).join('') + '</tr>';
   }
 
   function valueBadgeHtml(v) {
@@ -110,12 +149,21 @@ const App = (() => {
     return `<span class="badge-value ${cls}">${v}</span>`;
   }
 
+  // Ciclo a 3 stati sulla stessa colonna: decrescente -> crescente ->
+  // nessun ordinamento (col=null). Cliccando una colonna diversa si
+  // riparte sempre da decrescente. "Nessun ordinamento" mostra i
+  // giocatori nell'ordine naturale della lista filtrata (non ordinata).
   function applySort(list, key, tableId) {
     const state = sortState[tableId];
     if (key) {
-      if (state.col === key) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
-      else { state.col = key; state.dir = 'desc'; }
+      if (state.col === key) {
+        if (state.dir === 'desc') state.dir = 'asc';
+        else { state.col = null; state.dir = null; }
+      } else {
+        state.col = key; state.dir = 'desc';
+      }
     }
+    if (!state.col) return list.slice();
     const col = state.col, dir = state.dir === 'asc' ? 1 : -1;
     return list.slice().sort((a, b) => {
       const va = resolveSortValue(a, col), vb = resolveSortValue(b, col);
@@ -126,6 +174,17 @@ const App = (() => {
       return (va - vb) * dir;
     });
   }
+  // Lega il click sulle intestazioni ordinabili a `rerenderFn(sortKey)`,
+  // ignorando i click sul pulsante "?" di spiegazione colonna (che apre
+  // il tooltip invece di cambiare l'ordinamento).
+  function bindSortableHeaders(wrap, rerenderFn) {
+    wrap.querySelectorAll('th[data-sort]').forEach(th => {
+      th.addEventListener('click', (e) => {
+        if (e.target.closest('[data-info]')) return;
+        rerenderFn(th.dataset.sort);
+      });
+    });
+  }
   function resolveSortValue(p, col) {
     if (col in p) return p[col];
     if (p.calc && col in p.calc) return p.calc[col];
@@ -133,49 +192,160 @@ const App = (() => {
   }
 
   /* ---------------- GIOCATORI VIEW ---------------- */
+
+  // Un filtro rapido di ruolo e' semplicemente un filtro avanzato con
+  // field:'role' — cosi' "clicco Attaccanti" e poi aggiungo "Titolarità
+  // > 75%" nel pannello avanzato producono lo stesso identico elenco di
+  // filtri combinati (requisito Sprint 2.6, sezione 8).
+  function quickRoleFilter() {
+    return playersFilterState.filters.find(f => f.field === 'role') || null;
+  }
+  function setQuickRole(role) {
+    playersFilterState.filters = playersFilterState.filters.filter(f => f.field !== 'role');
+    if (role) playersFilterState.filters.push({ field: 'role', operator: 'eq', value: role });
+    renderPlayersView();
+  }
+  function toggleQuickFavorite() {
+    const idx = playersFilterState.filters.findIndex(f => f.field === 'favorite');
+    if (idx >= 0) playersFilterState.filters.splice(idx, 1);
+    else playersFilterState.filters.push({ field: 'favorite', operator: 'eq', value: true });
+    renderPlayersView();
+  }
+
   function renderPlayersFilters() {
     const wrap = document.getElementById('playersFilters');
     const teams = Array.from(new Set(players.map(p => p.team).filter(Boolean))).sort();
+    const activeRole = quickRoleFilter();
+    const favActive = playersFilterState.filters.some(f => f.field === 'favorite' && f.value === true);
+    const activeCount = playersFilterState.filters.length;
+    const resultsCount = filteredPlayers(playersFilterState).length;
+
     wrap.innerHTML = `
-      <label>Cerca<input type="text" id="fSearch" placeholder="Nome giocatore..." value="${escapeAttr(playersFilterState.search)}"></label>
-      <label>Ruolo<select id="fRole"><option value="">Tutti</option>${['P','D','C','A'].map(r => `<option value="${r}" ${playersFilterState.role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join('')}</select></label>
-      <label>Squadra<select id="fTeam"><option value="">Tutte</option>${teams.map(t => `<option value="${escapeAttr(t)}" ${playersFilterState.team===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}</select></label>
-      <label>Quot. min<input type="number" id="fQMin" value="${playersFilterState.qMin}"></label>
-      <label>Quot. max<input type="number" id="fQMax" value="${playersFilterState.qMax}"></label>
-      <label>Titol. min %<input type="number" id="fOwnMin" value="${playersFilterState.ownMin}"></label>
-      <label>Rating min<input type="number" step="0.1" id="fRatingMin" value="${playersFilterState.ratingMin}"></label>
-      <div class="chip-toggle ${playersFilterState.favOnly?'on':''}" id="fFavOnly">⭐ Preferiti</div>
-      <div class="chip-toggle ${playersFilterState.promotedOnly?'on':''}" id="fPromotedOnly">🆙 Neopromosse</div>
-      <div class="chip-toggle ${playersFilterState.revelationOnly?'on':''}" id="fRevelationOnly">🚀 Rivelazioni</div>
+      <div class="filters-top">
+        <label class="search-box">🔎 Cerca<input type="text" id="fSearch" placeholder="Nome giocatore..." value="${escapeAttr(playersFilterState.search)}"></label>
+        <div class="quick-filters">
+          <div class="chip-toggle ${!activeRole ? 'on' : ''}" data-quick-role="">Tutti</div>
+          <div class="chip-toggle ${activeRole && activeRole.value === 'P' ? 'on' : ''}" data-quick-role="P">Portieri</div>
+          <div class="chip-toggle ${activeRole && activeRole.value === 'D' ? 'on' : ''}" data-quick-role="D">Difensori</div>
+          <div class="chip-toggle ${activeRole && activeRole.value === 'C' ? 'on' : ''}" data-quick-role="C">Centrocampisti</div>
+          <div class="chip-toggle ${activeRole && activeRole.value === 'A' ? 'on' : ''}" data-quick-role="A">Attaccanti</div>
+          <div class="chip-toggle ${favActive ? 'on' : ''}" id="fFavOnly">⭐ Preferiti</div>
+          <div class="chip-toggle ${playersFilterState.quickPromoted ? 'on' : ''}" id="fPromotedOnly">🆙 Neopromosse</div>
+          <div class="chip-toggle ${playersFilterState.quickRevelation ? 'on' : ''}" id="fRevelationOnly">🚀 Rivelazioni</div>
+        </div>
+      </div>
+      <div class="advanced-filters">
+        <div class="advanced-filters-header">
+          <span class="filters-count">${activeCount ? `Filtri (${activeCount})` : 'Filtri'}</span>
+          <div class="advanced-filters-actions">
+            <button id="btnAddFilter" class="btn-secondary btn-sm" type="button">+ Aggiungi filtro</button>
+            ${activeCount ? '<button id="btnClearFilters" class="btn-secondary btn-sm" type="button">Cancella filtri</button>' : ''}
+          </div>
+        </div>
+        <div class="filter-rows">
+          ${playersFilterState.filters.map((f, i) => filterRowHtml(f, i, teams)).join('') || '<p class="filters-empty">Nessun filtro avanzato attivo. Usa "+ Aggiungi filtro" per combinare più criteri (es. Ruolo = A AND Titolarità ≥ 75).</p>'}
+        </div>
+        <div class="filters-summary">Risultati: <b>${resultsCount}</b> giocatori</div>
+      </div>
     `;
+
     wrap.querySelector('#fSearch').addEventListener('input', e => { playersFilterState.search = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fRole').addEventListener('change', e => { playersFilterState.role = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fTeam').addEventListener('change', e => { playersFilterState.team = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fQMin').addEventListener('input', e => { playersFilterState.qMin = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fQMax').addEventListener('input', e => { playersFilterState.qMax = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fOwnMin').addEventListener('input', e => { playersFilterState.ownMin = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fRatingMin').addEventListener('input', e => { playersFilterState.ratingMin = e.target.value; renderPlayersTable(); });
-    wrap.querySelector('#fFavOnly').addEventListener('click', () => { playersFilterState.favOnly = !playersFilterState.favOnly; renderPlayersView(); });
-    wrap.querySelector('#fPromotedOnly').addEventListener('click', () => { playersFilterState.promotedOnly = !playersFilterState.promotedOnly; renderPlayersView(); });
-    wrap.querySelector('#fRevelationOnly').addEventListener('click', () => { playersFilterState.revelationOnly = !playersFilterState.revelationOnly; renderPlayersView(); });
+    wrap.querySelectorAll('[data-quick-role]').forEach(el => {
+      el.addEventListener('click', () => setQuickRole(el.dataset.quickRole || null));
+    });
+    wrap.querySelector('#fFavOnly').addEventListener('click', toggleQuickFavorite);
+    wrap.querySelector('#fPromotedOnly').addEventListener('click', () => { playersFilterState.quickPromoted = !playersFilterState.quickPromoted; renderPlayersView(); });
+    wrap.querySelector('#fRevelationOnly').addEventListener('click', () => { playersFilterState.quickRevelation = !playersFilterState.quickRevelation; renderPlayersView(); });
+
+    wrap.querySelector('#btnAddFilter').addEventListener('click', () => {
+      playersFilterState.filters.push(Filters.newFilter('role'));
+      renderPlayersView();
+    });
+    const clearBtn = wrap.querySelector('#btnClearFilters');
+    if (clearBtn) clearBtn.addEventListener('click', () => { playersFilterState.filters = []; renderPlayersView(); });
+
+    bindFilterRowEvents(wrap, teams);
+  }
+
+  // Costruisce una riga [Campo] [Operatore] [Valore] [🗑] del pannello
+  // filtri avanzati. Il tipo di controllo Valore dipende dal tipo di
+  // campo (select / select-dynamic / number / bool) e dall'operatore
+  // (between richiede due valori).
+  function filterRowHtml(filter, index, teams) {
+    const def = Filters.fieldDef(filter.field) || FILTER_FIELDS[0];
+    const fieldOptions = FILTER_FIELDS.map(f => `<option value="${f.key}" ${f.key === filter.field ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('');
+    const opOptions = def.operators.map(op => `<option value="${op}" ${op === filter.operator ? 'selected' : ''}>${OPERATORS[op].label}</option>`).join('');
+
+    let valueHtml;
+    if (def.type === 'select' || def.type === 'select-dynamic') {
+      const opts = def.type === 'select-dynamic'
+        ? teams.map(t => ({ value: t, label: t }))
+        : def.options();
+      valueHtml = `<select class="fr-value" data-idx="${index}">
+        <option value="">-</option>
+        ${opts.map(o => `<option value="${escapeAttr(o.value)}" ${String(filter.value) === String(o.value) ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+      </select>`;
+    } else if (def.type === 'bool') {
+      valueHtml = `<select class="fr-value" data-idx="${index}">
+        <option value="">-</option>
+        <option value="true" ${filter.value === true ? 'selected' : ''}>Sì</option>
+        <option value="false" ${filter.value === false ? 'selected' : ''}>No</option>
+      </select>`;
+    } else if (filter.operator === 'between') {
+      valueHtml = `<input type="number" class="fr-value" data-idx="${index}" value="${escapeAttr(filter.value)}" placeholder="min">
+        <span class="fr-between-sep">e</span>
+        <input type="number" class="fr-value2" data-idx="${index}" value="${escapeAttr(filter.value2)}" placeholder="max">`;
+    } else {
+      valueHtml = `<input type="number" class="fr-value" data-idx="${index}" value="${escapeAttr(filter.value)}" placeholder="valore">`;
+    }
+
+    return `<div class="filter-row" data-idx="${index}">
+      <select class="fr-field" data-idx="${index}">${fieldOptions}</select>
+      <select class="fr-op" data-idx="${index}">${opOptions}</select>
+      ${valueHtml}
+      <button class="fr-remove" data-idx="${index}" title="Rimuovi filtro">🗑</button>
+    </div>`;
+  }
+
+  function bindFilterRowEvents(wrap, teams) {
+    wrap.querySelectorAll('.fr-field').forEach(el => el.addEventListener('change', () => {
+      const i = parseInt(el.dataset.idx, 10);
+      playersFilterState.filters[i] = Filters.newFilter(el.value);
+      renderPlayersView();
+    }));
+    wrap.querySelectorAll('.fr-op').forEach(el => el.addEventListener('change', () => {
+      const i = parseInt(el.dataset.idx, 10);
+      playersFilterState.filters[i].operator = el.value;
+      if (el.value !== 'between') playersFilterState.filters[i].value2 = '';
+      renderPlayersView();
+    }));
+    wrap.querySelectorAll('.fr-value').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
+      const i = parseInt(el.dataset.idx, 10);
+      const def = Filters.fieldDef(playersFilterState.filters[i].field);
+      playersFilterState.filters[i].value = def && def.type === 'bool' ? (el.value === '' ? '' : el.value === 'true') : el.value;
+      renderPlayersView();
+    }));
+    wrap.querySelectorAll('.fr-value2').forEach(el => el.addEventListener('input', () => {
+      const i = parseInt(el.dataset.idx, 10);
+      playersFilterState.filters[i].value2 = el.value;
+      renderPlayersView();
+    }));
+    wrap.querySelectorAll('.fr-remove').forEach(el => el.addEventListener('click', () => {
+      const i = parseInt(el.dataset.idx, 10);
+      playersFilterState.filters.splice(i, 1);
+      renderPlayersView();
+    }));
   }
 
   function filteredPlayers(state) {
     return players.filter(p => {
-      if (state.role && p.role !== state.role) return false;
-      if (state.team && p.team !== state.team) return false;
-      if (state.qMin !== '' && (p.quotation === null || p.quotation < parseFloat(state.qMin))) return false;
-      if (state.qMax !== '' && (p.quotation === null || p.quotation > parseFloat(state.qMax))) return false;
-      if (state.ownMin !== '' && (p.ownership === null || p.ownership < parseFloat(state.ownMin))) return false;
-      if (state.ratingMin !== '' && (p.rating === null || p.rating < parseFloat(state.ratingMin))) return false;
-      if (state.favOnly && !p.personal.favorite) return false;
-      if (state.promotedOnly && !p.isPromoted) return false;
-      if (state.revelationOnly && !(p.calc.revelationIndex !== null && p.calc.revelationIndex >= config.pricing.revelationThreshold)) return false;
       if (state.search) {
         const s = state.search.toLowerCase();
         if (!p.fullName.toLowerCase().includes(s)) return false;
       }
-      return true;
+      if (state.quickPromoted && !p.isPromoted) return false;
+      if (state.quickRevelation && !(p.calc.revelationIndex !== null && p.calc.revelationIndex >= config.pricing.revelationThreshold)) return false;
+      return Filters.playerPassesAll(p, state.filters);
     });
   }
 
@@ -187,8 +357,8 @@ const App = (() => {
   function renderPlayersTable(sortKey) {
     const list = applySort(filteredPlayers(playersFilterState), sortKey, 'players');
     const wrap = document.getElementById('playersTableWrap');
-    wrap.innerHTML = `<table><thead>${tableHeader()}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(10)}</tbody></table>`;
-    wrap.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => renderPlayersTable(th.dataset.sort)));
+    wrap.innerHTML = `<table><thead>${tableHeader('players')}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(14)}</tbody></table>`;
+    bindSortableHeaders(wrap, renderPlayersTable);
     bindRowActions(wrap);
   }
 
@@ -201,8 +371,8 @@ const App = (() => {
   function renderFavoritesTable(sortKey) {
     const list = applySort(players.filter(p => p.personal.favorite), sortKey, 'favorites');
     const wrap = document.getElementById('favoritesTableWrap');
-    wrap.innerHTML = `<table><thead>${tableHeader()}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(10, 'Nessun preferito ancora. Clicca la stella ☆ nella tabella Giocatori.')}</tbody></table>`;
-    wrap.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => renderFavoritesTable(th.dataset.sort)));
+    wrap.innerHTML = `<table><thead>${tableHeader('favorites')}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(14, 'Nessun preferito ancora. Clicca la stella ☆ nella tabella Giocatori.')}</tbody></table>`;
+    bindSortableHeaders(wrap, renderFavoritesTable);
     bindRowActions(wrap);
   }
 
@@ -253,7 +423,7 @@ const App = (() => {
     </tr>`).join('');
     return `<table><thead><tr>
       <th>#</th><th></th><th>Giocatore</th><th>Ruolo</th><th>Squadra</th>
-      <th>Quot.</th><th>Rating</th><th>Titol.</th><th>Ideale</th><th>Massimo</th><th>${idxLabel}</th>
+      <th>Quot.</th><th>Rating</th><th>Titol.</th><th>Ideale ⚠️</th><th>Massimo ⚠️</th><th>${idxLabel}</th>
       ${withMotivo ? '<th>Motivo</th>' : ''}
     </tr></thead><tbody>${rows}</tbody></table>`;
   }
@@ -310,8 +480,8 @@ const App = (() => {
     });
     list = applySort(list, sortKey, 'auction');
     const wrap = document.getElementById('auctionTableWrap');
-    wrap.innerHTML = `<table><thead>${tableHeader({ showBuy: true })}</thead><tbody>${list.map(p => playerRow(p, { showBuy: true })).join('') || emptyRow(12)}</tbody></table>`;
-    wrap.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => renderAuctionTable(th.dataset.sort)));
+    wrap.innerHTML = `<table><thead>${tableHeader('auction', { showBuy: true })}</thead><tbody>${list.map(p => playerRow(p, { showBuy: true })).join('') || emptyRow(15)}</tbody></table>`;
+    bindSortableHeaders(wrap, renderAuctionTable);
     bindRowActions(wrap);
   }
 
@@ -415,11 +585,57 @@ const App = (() => {
     renderAll();
   }
 
+  // Pannello "Come viene calcolato?" (Sprint 2.6): sostituisce il vecchio
+  // alert() con formule grezze. Mostra prima una spiegazione semplice
+  // (dati usati + direzione dell'influenza di ciascun fattore + badge
+  // "provvisorio"), e solo in una sezione secondaria collassabile le
+  // righe tecniche originali (invariate, per chi le vuole vedere).
   function showPriceExplanation(id) {
     const p = players.find(pl => pl.id === id);
     if (!p) return;
-    alert(`Come viene calcolato il prezzo di ${p.fullName}:\n\n` + (p.calc.priceExplanation || []).join('\n') +
-      `\n\nPrezzo ideale: ${fmtNum(p.calc.idealPrice)}\nPrezzo massimo: ${fmtNum(p.calc.maxBid)}\nStop: ${fmtNum(p.calc.stopPrice)}+`);
+    const c = p.calc;
+
+    const dataRow = (label, val) => `<div class="explain-data-row"><span>${escapeHtml(label)}</span><b>${val}</b></div>`;
+    const factorIcon = (d) => ({ up: '⬆️ Influenza positiva', down: '⬇️ Influenza negativa', neutral: '➖ Nessuna influenza', na: 'ℹ️ Dato non disponibile' }[d] || '');
+    const factorRow = (f) => `<div class="explain-factor-row"><span>${escapeHtml(f.label)}</span><span>${factorIcon(f.direction)}</span></div>`;
+
+    document.getElementById('explainTitle').textContent = `Come viene calcolato: ${p.fullName}`;
+
+    let body = `<div class="explain-section">
+      <h3>Dati utilizzati</h3>
+      ${dataRow('Quotazione', fmtNum(p.quotation))}
+      ${dataRow('Rating', p.rating !== null ? p.rating + ' / 100' : 'N/D')}
+      ${dataRow('Potenziale', p.potential !== null ? p.potential + ' / 100' : 'N/D')}
+      ${dataRow('Titolarità', p.ownership !== null ? p.ownership + '%' : 'N/D')}
+      ${dataRow('Bonus attesi', fmtNum(p.bonusAttesi))}
+      ${dataRow('Età', fmtNum(p.age))}
+      ${dataRow('Ruolo', ROLE_LABELS[p.role] || p.role)}
+      ${p.posizione ? dataRow('Posizione', escapeHtml(p.posizione)) : ''}
+    </div>`;
+
+    if (c.idealPrice === null) {
+      body += `<div class="explain-section"><p>${escapeHtml((c.priceExplanation || [])[0] || 'Dati insufficienti per calcolare un prezzo.')}</p></div>`;
+    } else {
+      body += `<div class="explain-section">
+        <h3>Fattori che influenzano la valutazione</h3>
+        ${(c.priceFactors || []).map(factorRow).join('')}
+      </div>
+      <div class="explain-section explain-result">
+        <h3>Risultato attuale</h3>
+        ${dataRow('Prezzo Ideale', fmtNum(c.idealPrice) + ' ⚠️ PROVVISORIO')}
+        ${dataRow('Prezzo Massimo', fmtNum(c.maxBid) + ' ⚠️ PROVVISORIO')}
+        ${dataRow('Stop', fmtNum(c.stopPrice) + '+ ⚠️ PROVVISORIO')}
+      </div>
+      <p class="explain-note">⚠️ <b>Valutazione provvisoria.</b> Questi prezzi usano il modello attualmente presente nell'app (basato sulla quotazione di partenza). Il modello definitivo verrà riprogettato e parametrizzato sul budget/configurazione della lega nello Sprint 3.</p>`;
+    }
+
+    body += `<details class="explain-tech">
+      <summary>Dettagli tecnici</summary>
+      <ul>${(c.priceExplanation || []).map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul>
+    </details>`;
+
+    document.getElementById('explainBody').innerHTML = body;
+    document.getElementById('explainModal').classList.remove('hidden');
   }
 
   /* ---------------- BUY MODAL ---------------- */
@@ -430,6 +646,8 @@ const App = (() => {
     document.getElementById('importCancelBtn').addEventListener('click', closeImportModal);
     document.getElementById('importFileInput').addEventListener('change', handleImportFile);
     document.getElementById('loadDemoBtn').addEventListener('click', handleLoadDemo);
+    document.getElementById('explainCloseBtn').addEventListener('click', () => document.getElementById('explainModal').classList.add('hidden'));
+    document.getElementById('infoCloseBtn').addEventListener('click', () => document.getElementById('infoModal').classList.add('hidden'));
     bindImportModeTabs();
   }
 
@@ -545,8 +763,16 @@ const App = (() => {
       ? `<p class="err">⚠️ Colonna${preview.missingRequired.length > 1 ? 'e' : ''} "${preview.missingRequired.map(f => Importer.FIELD_LABELS[f]).join(', ')}" non trovata. ${
           importMode === 'indices'
             ? 'Serve almeno rating o titolarità per un import Indici utile.'
-            : 'Se mancano rating/titolarità l\'app mostrerà N/D e non inventerà valori; se mancano nome/squadra/ruolo/quotazione controlla le intestazioni del file.'
+            : 'Se mancano rating/titolarità/potenziale/età/bonus attesi l\'app mostrerà N/D e non inventerà valori; se mancano nome/squadra/ruolo/quotazione controlla le intestazioni del file.'
         }</p>`
+      : '';
+
+    const countsHtml = (importMode !== 'indices' && preview.totalHeadersCount)
+      ? `<div class="preview-counts">
+           Colonne riconosciute: <strong>${preview.recognizedHeadersCount} / ${preview.totalHeadersCount}</strong><br>
+           Record validi: <strong>${preview.validCount} / ${preview.totalCount}</strong>
+           ${preview.invalidCount ? ` <span class="err">(${preview.invalidCount} scartati: mancano nome/squadra/ruolo/quotazione)</span>` : ''}
+         </div>`
       : '';
 
     wrap.innerHTML = `
@@ -554,11 +780,12 @@ const App = (() => {
         <strong>ANTEPRIMA IMPORTAZIONE</strong> — ${preview.fileName}<br>
         Trovati: <strong>${preview.totalCount} giocatori</strong>
         <div class="preview-cols">${colsHtml}</div>
+        ${countsHtml}
         ${warningHtml}
         ${sampleHtml}
         <div class="modal-actions">
           <button id="previewCancelBtn" class="btn-secondary">ANNULLA</button>
-          <button id="previewConfirmBtn" class="btn-primary">${importMode === 'indices' ? 'IMPORTA INDICI' : `IMPORTA ${preview.totalCount} GIOCATORI`}</button>
+          <button id="previewConfirmBtn" class="btn-primary">${importMode === 'indices' ? 'IMPORTA INDICI' : `IMPORTA ${preview.validCount ?? preview.totalCount} GIOCATORI`}</button>
         </div>
       </div>`;
 

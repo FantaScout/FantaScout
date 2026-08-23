@@ -103,16 +103,74 @@ const DataModel = (() => {
     return key;
   }
 
+  // ------------------------------------------------------------
+  // SPLIT NOME/COGNOME (Sprint 2.5)
+  // Fantacalcio-Online fornisce un'unica colonna "Nome" con
+  // COGNOME + spazio + NOME (es. "RAMOS Goncalo Matias",
+  // "KOLO MUANI Randal"). Non possiamo assumere "prima parola =
+  // cognome": alcuni cognomi sono composti da piu' parole, tutte
+  // in maiuscolo. Euristica: i token iniziali interamente in
+  // MAIUSCOLO fanno parte del cognome; il primo token che contiene
+  // una lettera minuscola segna l'inizio del nome, e tutto il resto
+  // (anche se maiuscolo) va nel nome. Se nessun token e' "misto",
+  // l'intera stringa resta cognome e il nome resta vuoto: non e'
+  // un errore, il testo originale e' comunque preservato altrove.
+  // ------------------------------------------------------------
+  function isAllUpperToken(t) {
+    const letters = t.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, '');
+    if (!letters) return true;
+    return letters === letters.toUpperCase() && letters !== letters.toLowerCase();
+  }
+
+  function splitNameFromFull(full) {
+    const raw = (full || '').toString().trim();
+    if (!raw) return { surname: '', name: '' };
+    const tokens = raw.split(/\s+/);
+    let i = 0;
+    while (i < tokens.length && isAllUpperToken(tokens[i])) i++;
+    if (i === 0) i = 1; // almeno il primo token resta cognome
+    const surnameTokens = tokens.slice(0, i);
+    const nameTokens = tokens.slice(i);
+    return { surname: surnameTokens.join(' '), name: nameTokens.join(' ') };
+  }
+
+  // Un record e' valido per il listone Classic solo se ha nome
+  // completo, squadra, ruolo riconosciuto e quotazione. Rating,
+  // potenziale, titolarita', eta' e bonus attesi possono mancare
+  // (restano null -> "N/D" in UI).
+  function computeValidity(p) {
+    return !!(p.fullName && p.team && p.role && p.role !== 'N/D' && p.quotation !== null);
+  }
+
   // Normalizza un record grezzo (da CSV/XLSX/JSON, gia' rimappato sulle
   // chiavi interne dall'Importer) nello schema interno.
   // Campi non disponibili restano null -> in UI verranno mostrati come "N/D".
   // `existingIndex` e `seenInThisBatch` sono opzionali: se non passati si
   // ricade sul vecchio comportamento (slug nome+cognome+squadra).
   function normalize(raw, existingIndex, seenInThisBatch) {
-    const name = (raw.name || raw.nome || '').toString().trim();
-    const surname = (raw.surname || raw.cognome || '').toString().trim();
+    let name = (raw.name || raw.nome || '').toString().trim();
+    let surname = (raw.surname || raw.cognome || '').toString().trim();
+    let displayName;
+    if (surname) {
+      // Formato "vecchio": colonne Nome e Cognome separate.
+      displayName = `${name} ${surname}`.trim();
+    } else if (name) {
+      // Formato Fantacalcio-Online: "Nome" contiene nome+cognome insieme.
+      // Il testo originale va SEMPRE preservato in displayName/fullName,
+      // anche se lo split nome/cognome non e' perfetto.
+      displayName = name;
+      const split = splitNameFromFull(name);
+      surname = split.surname;
+      name = split.name;
+    } else {
+      displayName = '';
+    }
+
     const team = (raw.team || raw.squadra || '').toString().trim();
     const role = normalizeRole(raw.role || raw.ruolo || '');
+    const roleTrequartista = (raw.roleTrequartista || '').toString().trim();
+    const roleFantacalcioIt = (raw.roleFantacalcioIt || '').toString().trim();
+    const posizione = (raw.posizione || '').toString().trim();
     const explicitId = raw.id && String(raw.id).trim();
     const id = existingIndex !== undefined
       ? resolvePlayerId(name, surname, team, explicitId, existingIndex, seenInThisBatch)
@@ -120,20 +178,27 @@ const DataModel = (() => {
 
     const quotation = toNumberOrNull(raw.quotation ?? raw.quotazione);
     const rating = toNumberOrNull(raw.rating ?? raw.fantaindex_rating ?? raw.rating_fantaindex);
+    const potential = toNumberOrNull(raw.potential);
     const ownership = toNumberOrNull(raw.ownership ?? raw.titolarita ?? raw.fantaindex_titolarita);
     const age = toNumberOrNull(raw.age ?? raw.eta);
+    const bonusAttesi = toNumberOrNull(raw.bonusAttesi);
 
     return {
       id,
       name,
       surname,
-      fullName: `${name} ${surname}`.trim(),
+      fullName: displayName,
       team,
       role,                      // 'P' | 'D' | 'C' | 'A'
-      quotation,                 // numero o null
-      rating,                    // 0-10ish, FantaIndex Rating, o null se N/D
-      ownership,                 // 0-100, FantaIndex Titolarita', o null se N/D
+      roleTrequartista,          // valore grezzo conservato, non normalizzato
+      roleFantacalcioIt,         // valore grezzo conservato, non normalizzato
+      posizione,                 // es. AC, TQ, AD, CC - conservata per il futuro Intelligence Engine
+      quotation,                 // numero o null (fonte: Kapitals)
+      rating,                    // numero o null (fonte: RAT) - vedi nota scala in README
+      potential,                 // numero o null (fonte: POT)
+      ownership,                 // 0-100 o null (fonte: IS %)
       age,                       // anni, o null
+      bonusAttesi,                // numero o null (fonte: Bonus = bonus attesi)
       isPromoted: null,          // calcolato dopo, in base a config.promotedTeams
       sourceUpdatedAt: raw.sourceUpdatedAt || null,
       missingFromLastUpdate: false,
@@ -247,7 +312,8 @@ const DataModel = (() => {
   return {
     slugId, nameSlug, buildExistingIndex, resolvePlayerId,
     normalize, normalizeRole, applyPromotedFlag,
-    mergeRemote, mergeIndices, joinWithPersonal
+    mergeRemote, mergeIndices, joinWithPersonal,
+    splitNameFromFull, computeValidity
   };
 })();
 

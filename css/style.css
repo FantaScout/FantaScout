@@ -200,6 +200,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   font-size: 0.85rem;
 }
 .preview-cols { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.preview-counts { margin: 8px 0; font-size: 0.9em; color: var(--text-dim); line-height: 1.6; }
 .preview-col-ok { color: var(--green); }
 .preview-col-missing { color: var(--red); }
 .preview-sample-wrap { overflow-x: auto; margin-top: 8px; }
@@ -220,6 +221,67 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 
 .priority-note { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; }
+
+/* ============================================================
+   SPRINT 2.6 - Filtri avanzati, tooltip colonne, badge provvisorio,
+   pannello "Come viene calcolato?"
+   ============================================================ */
+
+.filters-top { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 10px; }
+.search-box { display: flex; flex-direction: column; gap: 3px; font-size: 0.7rem; color: var(--text-dim); }
+.search-box input { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 7px 9px; border-radius: 8px; font-size: 0.85rem; }
+.quick-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.advanced-filters { border-top: 1px solid var(--border); padding-top: 10px; }
+.advanced-filters-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.filters-count { font-weight: 700; font-size: 0.85rem; }
+.advanced-filters-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-sm { padding: 6px 10px; font-size: 0.78rem; min-height: 32px; }
+
+.filter-rows { display: flex; flex-direction: column; gap: 6px; }
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.filter-row select, .filter-row input {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 8px; border-radius: 6px; font-size: 0.82rem;
+}
+.filter-row .fr-value, .filter-row .fr-value2 { max-width: 130px; }
+.fr-between-sep { color: var(--text-dim); font-size: 0.8rem; }
+.fr-remove { background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; cursor: pointer; padding: 5px 9px; margin-left: auto; }
+.fr-remove:hover { color: var(--red); border-color: var(--red); }
+.filters-empty { font-size: 0.8rem; color: var(--text-dim); margin: 4px 0; }
+.filters-summary { margin-top: 10px; font-size: 0.85rem; color: var(--text-dim); }
+.filters-summary b { color: var(--text); }
+
+.info-btn {
+  background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 50%;
+  width: 16px; height: 16px; line-height: 1; font-size: 0.62rem; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+}
+.info-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.badge-provisional { font-size: 0.75rem; cursor: help; }
+
+/* Pannello "Come viene calcolato?" */
+.explain-section { margin-bottom: 14px; }
+.explain-section h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim); margin: 0 0 8px; }
+.explain-data-row, .explain-factor-row {
+  display: flex; justify-content: space-between; gap: 10px; padding: 5px 0;
+  border-bottom: 1px solid var(--border); font-size: 0.88rem;
+}
+.explain-data-row:last-child, .explain-factor-row:last-child { border-bottom: none; }
+.explain-result { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
+.explain-note { font-size: 0.82rem; color: var(--yellow); background: rgba(244,180,0,0.08); border: 1px solid rgba(244,180,0,0.3); border-radius: 8px; padding: 10px 12px; line-height: 1.5; }
+.explain-tech { margin-top: 12px; font-size: 0.82rem; color: var(--text-dim); }
+.explain-tech summary { cursor: pointer; color: var(--text); }
+.explain-tech ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.6; }
+
+/* Colonne secondarie: nascoste sugli schermi molto piccoli, mai tolte
+   dai dati (restano filtrabili e visibili nel pannello "Come viene
+   calcolato?"). Su schermi normali lo scroll orizzontale del
+   .table-wrap le rende comunque raggiungibili. */
+@media (max-width: 480px) {
+  th.col-secondary, td.col-secondary { display: none; }
+}
 
 @media (max-width: 640px) {
   .topbar { flex-direction: column; align-items: stretch; }

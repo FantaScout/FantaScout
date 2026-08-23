@@ -141,6 +141,28 @@
   </div>
 </div>
 
+<!-- Modal "Come viene calcolato?" (pannello prezzo, Sprint 2.6) -->
+<div id="explainModal" class="modal hidden">
+  <div class="modal-content modal-content-wide">
+    <h2 id="explainTitle">Come viene calcolato</h2>
+    <div id="explainBody"></div>
+    <div class="modal-actions">
+      <button id="explainCloseBtn" class="btn-secondary">Chiudi</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal generico per i tooltip "?" delle colonne (Sprint 2.6) -->
+<div id="infoModal" class="modal hidden">
+  <div class="modal-content">
+    <h2 id="infoTitle"></h2>
+    <div id="infoBody"></div>
+    <div class="modal-actions">
+      <button id="infoCloseBtn" class="btn-secondary">Chiudi</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 
 <!-- SheetJS (lettura file Excel .xlsx lato client, nessuna build richiesta).
@@ -151,6 +173,7 @@
 <script src="js/config.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/data.js"></script>
+<script src="js/filters.js"></script>
 <script src="js/scouting.js"></script>
 <script src="js/importer.js"></script>
 <script src="js/auction.js"></script>

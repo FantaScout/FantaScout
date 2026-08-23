@@ -20,13 +20,22 @@ const Scouting = (() => {
 
   // Prezzo ideale/massimo/stop. Se manca la quotazione non possiamo
   // calcolare nulla -> N/D esplicito, mai un numero a caso.
+  //
+  // NOTA SPRINT 2.6: oltre a `explanation` (testo tecnico, invariato,
+  // usato solo nella sezione secondaria "Dettagli tecnici" della UI)
+  // questa funzione ora restituisce anche `factors`: una versione in
+  // linguaggio semplice ("Rating -> Influenza positiva") degli stessi
+  // fattori, pensata per il pannello "Come viene calcolato?". Nessun
+  // numero/coefficiente/formula e' stato modificato: e' solo metadato
+  // descrittivo aggiuntivo sullo stesso calcolo di sempre.
   function computePricing(player, pricingCoeffs) {
     if (player.quotation === null || player.quotation === undefined) {
-      return { idealPrice: null, maxBid: null, stopPrice: null, explanation: ['Quotazione non disponibile: impossibile calcolare un prezzo.'] };
+      return { idealPrice: null, maxBid: null, stopPrice: null, factors: [], explanation: ['Quotazione non disponibile: impossibile calcolare un prezzo.'] };
     }
 
     const c = pricingCoeffs;
     const explanation = [];
+    const factors = [];
     let multiplier = 1;
 
     // Fattore rating (FantaIndex Rating): solo se disponibile
@@ -35,8 +44,10 @@ const Scouting = (() => {
       const factor = 1 + c.ratingWeight * delta;
       multiplier *= factor;
       explanation.push(`Rating ${player.rating.toFixed(2)} vs base 6.00 -> fattore ${factor.toFixed(2)}`);
+      factors.push({ label: 'Rating', direction: factorDirection(factor) });
     } else {
       explanation.push('Rating non disponibile: nessun aggiustamento applicato.');
+      factors.push({ label: 'Rating', direction: 'na' });
     }
 
     // Fattore titolarita' (FantaIndex Titolarita' 0-100): solo se disponibile
@@ -45,38 +56,51 @@ const Scouting = (() => {
       const factor = 1 + c.ownershipWeight * delta;
       multiplier *= factor;
       explanation.push(`Titolarita' ${player.ownership.toFixed(0)}% vs base 60% -> fattore ${factor.toFixed(2)}`);
+      factors.push({ label: 'Titolarità', direction: factorDirection(factor) });
 
       if (player.ownership < c.lowOwnershipThreshold) {
         multiplier *= (1 - c.lowOwnershipDiscount);
         explanation.push(`Titolarita' sotto soglia di rischio (${c.lowOwnershipThreshold}%) -> sconto rischio ${(c.lowOwnershipDiscount * 100).toFixed(0)}%`);
+        factors.push({ label: 'Rischio titolarità bassa', direction: 'down' });
       }
     } else {
       explanation.push('Titolarita\' non disponibile: nessun aggiustamento applicato.');
+      factors.push({ label: 'Titolarità', direction: 'na' });
     }
 
     // Scarsita' di ruolo
     const scarcity = c.roleScarcity[player.role] ?? 1;
     multiplier *= scarcity;
     explanation.push(`Scarsita' ruolo ${player.role} -> fattore ${scarcity.toFixed(2)}`);
+    factors.push({ label: `Scarsità ruolo ${player.role}`, direction: factorDirection(scarcity) });
 
     // Bonus rivelazione (se indice alto)
     const revealIdx = computeRevelationIndex(player, pricingCoeffs).value;
     if (revealIdx !== null && revealIdx >= c.revelationThreshold) {
       multiplier *= (1 + c.revelationBonus);
       explanation.push(`Indice Rivelazione alto (${revealIdx}) -> bonus ${(c.revelationBonus * 100).toFixed(0)}%`);
+      factors.push({ label: 'Indice Rivelazione alto', direction: 'up' });
     }
 
     // Sconto rischio neopromossa (parzialmente compensato se e' anche rivelazione)
     if (player.isPromoted) {
       multiplier *= (1 - c.promotedRiskDiscount);
       explanation.push(`Squadra neopromossa -> sconto rischio ${(c.promotedRiskDiscount * 100).toFixed(0)}%`);
+      factors.push({ label: 'Squadra neopromossa (rischio)', direction: 'down' });
     }
 
     const idealPrice = Math.max(1, Math.round(player.quotation * multiplier));
     const maxBid = Math.max(idealPrice, Math.round(idealPrice * (1 + c.maxBidMargin)));
     const stopPrice = Math.max(maxBid + 1, Math.round(maxBid * (1 + c.stopMargin)));
 
-    return { idealPrice, maxBid, stopPrice, explanation };
+    return { idealPrice, maxBid, stopPrice, factors, explanation };
+  }
+
+  // Traduce un moltiplicatore in una direzione semplice per la UI.
+  function factorDirection(factor) {
+    if (factor > 1.001) return 'up';
+    if (factor < 0.999) return 'down';
+    return 'neutral';
   }
 
   // Indice Modificatore Difesa (solo per ruolo D), 0-100.
@@ -164,6 +188,7 @@ const Scouting = (() => {
         maxBid,
         stopPrice: pricing.stopPrice,
         priceExplanation: pricing.explanation,
+        priceFactors: pricing.factors,
         modifierIndex: modifierIndex.value,
         modifierReason: modifierIndex.reason,
         revelationIndex: revelationIndex.value,

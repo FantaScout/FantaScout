@@ -8,6 +8,23 @@ e propone classifiche di scouting (rivelazioni, neopromosse, affari, modificator
 delle colonne, anteprima), l'app utilizzabile da smartphone e ha verificato/documentato il
 modello di prezzo. Non è stata riscritta: tutte le funzionalità della v1 restano.
 
+**Sprint 2.5** ha risolto l'importazione del vero export Excel di Fantacalcio-Online
+("Quotazioni Fantacalcio-Online.xlsx"), che usa intestazioni diverse da quelle attese in
+precedenza (`Nome`, `RAT`, `POT`, `IS %`, `ETA'`, `Ruolo standard`, `Ruolo trequartista`,
+`Ruolo Fantacalcio.it`, `Posizione`, `Squadra`, `Kapitals`, `Bonus` — vedi punto 3bis). Non ha
+toccato il modello di prezzo/scouting.
+
+**Sprint 2.6** ha reso le tabelle comprensibili e utilizzabili: ogni colonna ha ora un nome
+chiaro e un tooltip `?` che ne spiega il significato, la colonna "Valore" è stata rinominata
+"Indice FantaScout" (era ambigua — vedi punto 9bis), la tabella Giocatori ha un pannello di
+filtri avanzati combinabili con AND, l'ordinamento delle colonne mostra chiaramente la
+freccia ↑/↓ ed è a 3 stati (decrescente → crescente → nessun ordinamento), e il pannello
+"Come viene calcolato?" del prezzo è stato riscritto in linguaggio semplice (le formule
+restano disponibili in una sezione secondaria "Dettagli tecnici"). **Non ha toccato** il
+modello matematico dei prezzi (stessi coefficienti, stessi numeri): li mostra solo in modo
+più onesto, con un'etichetta "⚠️ provvisorio" ovunque compaiano, perché saranno
+riprogettati nello Sprint 3.
+
 ---
 
 ## 1. Come avviare FantaScout
@@ -47,10 +64,13 @@ anteprima** prima di importare davvero:
 
 ```
 ANTEPRIMA IMPORTAZIONE
-Trovati: 585 giocatori
-✓ Nome  ✓ Cognome  ✓ Squadra  ✓ Ruolo  ✓ Quotazione  ✓ Rating  ✓ Titolarità  ✓ Età
+Trovati: 574 giocatori
+✓ Nome completo  ✓ Squadra  ✓ Ruolo Classic  ✓ Quotazione  ✓ Rating  ✓ Potenziale
+✓ Titolarità  ✓ Età  ✓ Bonus attesi  ✓ Posizione  ✓ Ruolo trequartista  ✓ Ruolo Fantacalcio.it
+Colonne riconosciute: 12 / 12
+Record validi: 574 / 574
 [righe di esempio]
-[ANNULLA]   [IMPORTA 585 GIOCATORI]
+[ANNULLA]   [IMPORTA 574 GIOCATORI]
 ```
 
 Se una colonna non viene riconosciuta, appare `⚠️ Colonna "X" non trovata`, con la
@@ -59,6 +79,45 @@ saranno mostrati come **N/D**, mai inventati.
 
 I tuoi ⭐ preferiti, 📝 note, acquisti e prezzi personalizzati **non vengono mai toccati**
 da un import: vivono in uno storage separato (vedi punto 8).
+
+---
+
+## 3bis. Formato reale Fantacalcio-Online e come viene mappato
+
+Il listone scaricato da Fantacalcio-Online **non** ha colonne "Nome"/"Cognome" separate né
+si chiama "Rating"/"Titolarità"/"Quotazione": ha queste 12 colonne, riconosciute
+automaticamente (tollerando maiuscole/minuscole, spazi in più, apostrofi diversi):
+
+| Colonna nel file        | Campo interno FantaScout | Significato |
+|--------------------------|---------------------------|-------------|
+| `Nome`                   | nome completo (poi diviso in nome+cognome) | cognome + nome, es. "MARTINEZ Lautaro" |
+| `RAT`                    | rating                    | Rating Fantacalcio-Online (⚠️ vedi nota scala sotto) |
+| `POT`                    | potenziale                | Potenziale |
+| `IS %`                   | titolarità                | Indice di titolarità |
+| `ETA'`                   | età                       | Età |
+| `Ruolo standard`         | ruolo Classic (P/D/C/A)   | usato per il ruolo principale |
+| `Ruolo trequartista`     | ruolo trequartista        | conservato, non usato per il ruolo Classic |
+| `Ruolo Fantacalcio.it`   | ruolo Fantacalcio.it      | conservato, non usato per il ruolo Classic |
+| `Posizione`              | posizione                 | es. AC, TQ, AD, CC — conservata per il futuro Intelligence Engine |
+| `Squadra`                | squadra                   | squadra attuale |
+| `Kapitals`                | quotazione                | quotazione ufficiale di riferimento |
+| `Bonus`                   | **bonus attesi**          | non è un bonus già maturato: è una stima attesa |
+
+**Nome e cognome**: la colonna `Nome` contiene cognome+nome insieme (es. "RAMOS Goncalo
+Matias", "KOLO MUANI Randal"). FantaScout li separa in automatico riconoscendo che il
+cognome è la sequenza di parole in MAIUSCOLO a inizio stringa (anche se composta da più
+parole, come "KOLO MUANI"), mentre il resto è il nome. Il testo originale completo viene
+**sempre preservato** come nome giocatore visualizzato, indipendentemente da come va lo
+split — nessun dato viene perso anche nei rari casi limite.
+
+**⚠️ Nota importante sulla scala del Rating**: il modello di prezzo attuale (punto 9, non
+toccato in questo sprint) è stato tarato per un "FantaIndex Rating" su scala ~6.00-9.00
+(scostamento dal 6.00). Il `RAT` di Fantacalcio-Online è invece su scala diversa, molto più
+ampia (es. 84, 77, 69). Il valore viene importato e conservato correttamente nel campo
+`rating`, ma **finché il modello di prezzo non viene aggiornato allo Sprint 3, il suo
+contributo al Prezzo Ideale/Massimo sarà distorto per i dati reali** (moltiplicatori fuori
+scala). Non è stato corretto in questo sprint perché la consegna era "non toccare il modello
+di prezzo/scouting" — sarà uno dei primi punti dello Sprint 3 (Intelligence Engine).
 
 ---
 
@@ -79,13 +138,15 @@ silenzio, e puoi comunque esportare il file come CSV e importarlo così.
 
 ## 4. Quali dati sono necessari
 
-Per il **Listone completo**, servono almeno: nome, cognome, squadra, ruolo, quotazione.
-Senza quotazione l'app non può calcolare nessun prezzo per quel giocatore (mostra N/D,
-mai un numero a caso).
+Per il **Listone completo**, servono almeno: nome (completo), squadra, ruolo, quotazione.
+Un record a cui manca uno di questi viene segnalato come problematico e **non importato**
+come giocatore valido (l'anteprima mostra quanti record sono validi su quanti trovati).
+Senza quotazione l'app non può calcolare nessun prezzo per quel giocatore.
 
 ## 5. Quali dati sono opzionali
 
-`id` (se assente, l'app ne genera uno stabile — vedi punto 7), rating, titolarità, età.
+`id` (se assente, l'app ne genera uno stabile — vedi punto 7), rating, potenziale,
+titolarità, età, bonus attesi, posizione, ruolo trequartista, ruolo Fantacalcio.it.
 Se rating e/o titolarità mancano, gli indici che ne dipendono (Prezzo Ideale/Massimo,
 Modificatore Difesa, Rivelazione, Affare) si adattano usando solo i dati realmente
 disponibili, e mostrano N/D dove i dati non bastano — **mai stimati o inventati**.
@@ -137,7 +198,8 @@ I dati vivono in **due storage separati** (in `localStorage`, chiavi `fs_players
 `fs_players_personal`):
 
 - **REMOTI** (sovrascrivibili da un import): nome, cognome, squadra, ruolo, quotazione,
-  rating, titolarità, età.
+  rating, potenziale, titolarità, età, bonus attesi, posizione, ruolo trequartista, ruolo
+  Fantacalcio.it.
 - **PERSONALI** (mai sovrascritti da un import): ⭐ preferito, 📝 nota, acquistato, prezzo
   pagato, squadra avversaria acquirente, override manuali di prezzo ideale/massimo.
 
@@ -192,6 +254,52 @@ gli altri 7 partecipanti, non da una formula. Il modello **non dice** "questo gi
 23": dice "con le impostazioni della tua lega, 23 è il limite oltre il quale, secondo questo
 modello, rischi di pagarlo più di quanto valga per te". È uno strumento di supporto
 decisionale, non una previsione matematica certa.
+
+---
+
+## 9bis. Utilizzo delle tabelle (Sprint 2.6)
+
+### Cosa significa ogni colonna
+
+Ogni intestazione con un pulsante `?` apre una spiegazione in linguaggio semplice (cosa
+rappresenta il dato, da quale fonte viene, su quale scala). Le spiegazioni sono
+centralizzate in `js/config.js` → `TOOLTIPS`, cosi' restano coerenti in tutte le tabelle
+(Giocatori, Preferiti, Asta). In particolare:
+
+- **RAT / POT / Titol. / Bonus / Età**: dati che arrivano cosi' come sono da
+  Fantacalcio-Online (vedi punto 3bis). "N/D" quando la fonte non li fornisce — mai un
+  valore inventato o messo a 0.
+- **Indice FantaScout** (ex "Valore"): la vecchia etichetta era ambigua — sembrava un
+  prezzo, ma è un punteggio sintetico 0-100 calcolato da `Scouting.computeValueIndex()`
+  per confrontare rapidamente i giocatori tra loro (rating + titolarità + quotazione).
+  **Non è un prezzo e non rappresenta crediti.**
+- **Prezzo Ideale / Prezzo Massimo**: sempre accompagnati dal badge ⚠️, che indica
+  valutazione **provvisoria** (vedi "Importante" sopra e nota nel pannello `?`).
+
+### Filtri combinabili
+
+Nella vista Giocatori, il pannello **Filtri** permette di aggiungere più condizioni con
+**"+ Aggiungi filtro"**: ogni riga è `[Campo] [Operatore] [Valore] [🗑]` e tutte le righe
+attive vengono combinate con **AND** (es. `Ruolo = A` **e** `Titolarità ≥ 75` **e**
+`RAT ≥ 75` mostra solo i giocatori che rispettano tutte e tre le condizioni). Il numero di
+filtri attivi e il conteggio dei risultati sono sempre visibili ("Filtri (3)" — "Risultati:
+N giocatori"). **Cancella filtri** rimuove tutti i filtri avanzati in un colpo solo.
+
+I filtri rapidi (Tutti / Portieri / Difensori / Centrocampisti / Attaccanti / ⭐ Preferiti)
+sono lo stesso identico meccanismo: cliccarli aggiunge/toglie un filtro dal pannello, quindi
+sono sempre compatibili con i filtri avanzati (es. clicco "Attaccanti", poi aggiungo
+"Titolarità ≥ 75%": il sistema applica entrambe le condizioni). I campi disponibili — Ruolo,
+Squadra, RAT, POT, Titolarità, Età, Bonus attesi, Quotazione, Indice FantaScout, Prezzo
+Ideale, Prezzo Massimo, Preferito, Neopromossa, Disponibilità — sono centralizzati in
+`js/config.js` → `FILTER_FIELDS`, con la logica di valutazione in `js/filters.js`.
+
+### Ordinamento
+
+Ogni colonna ordinabile mostra lo stato direttamente nell'intestazione (`RAT ↓` = ordinata
+per RAT decrescente). Il click è a **3 stati**: primo click → decrescente, secondo click →
+crescente, terzo click → nessun ordinamento. Cliccare una colonna diversa riparte sempre da
+decrescente. Cambiare i filtri non azzera l'ordinamento e viceversa: sono stati indipendenti
+(`sortState` e `playersFilterState` in `js/app.js`).
 
 ---
 
@@ -273,6 +381,7 @@ smartphone in mobilità.
 /js/config.js         configurazione di default e coefficienti (nessun numero magico altrove)
 /js/storage.js        persistenza localStorage, dati REMOTI separati dai dati PERSONALI
 /js/data.js           normalizzazione giocatore, matching/risoluzione ID, merge remoto/personale/indici
+/js/filters.js         motore filtri avanzati combinabili (AND) - Sprint 2.6, usa FILTER_FIELDS/OPERATORS di config.js
 /js/scouting.js       modello di pricing + indici (rivelazione, modificatore, affare)
 /js/importer.js       lettura XLSX/CSV/JSON, riconoscimento colonne, anteprima, import listone/indici
 /js/auction.js        stato asta live: budget, rosa per ruolo, acquisto giocatori
@@ -300,7 +409,40 @@ smartphone in mobilità.
    Residuo = Budget iniziale − Speso.
 10. **File errato**: prova a importare un file corrotto/non valido; deve comparire un errore
     leggibile in anteprima, senza alterare i dati già salvati.
+11. **Listone reale Fantacalcio-Online**: importa "Quotazioni Fantacalcio-Online.xlsx"; in
+    anteprima devono comparire "Colonne riconosciute: 12 / 12" e "Record validi: 574 / 574"
+    (o il numero reale del file che stai usando).
+12. **Nome composto**: cerca un giocatore con cognome multi-parola (es. "KOLO MUANI") e uno
+    con nome multi-parola (es. "RAMOS Goncalo Matias"); il nome visualizzato deve essere
+    completo e corretto.
+13. **Riga senza quotazione**: se nel file reale manca la quotazione per qualche giocatore,
+    verifica che compaia nell'elenco errori sotto "Record validi" e non finisca in tabella.
+
+### Test Sprint 2.6 (tabelle, filtri, ordinamento, spiegazioni)
+
+14. **Filtro singolo**: `Ruolo = A` → solo attaccanti.
+15. **Filtri multipli**: `Ruolo = A` + `Titolarità ≥ 75` + `RAT ≥ 75` → solo giocatori che
+    rispettano tutte e tre le condizioni contemporaneamente.
+16. **Filtro squadra**: `Squadra = Inter` (e verifica anche `Squadra ≠ Inter`).
+17. **Filtro numerico**: `Bonus attesi ≥ 15`.
+18. **Filtri + ordinamento insieme**: `Ruolo = A` + `Titolarità ≥ 75`, ordinamento `Bonus
+    attesi ↓` → solo attaccanti con titolarità ≥75%, dal più prolifico in bonus attesi.
+19. **Click sulla colonna RAT**: primo click → `RAT ↓`; secondo click → `RAT ↑`; terzo click →
+    nessun ordinamento (torna l'ordine non ordinato).
+20. **Cambiare filtro senza perdere l'ordinamento** e viceversa.
+21. **Reset filtri**: "Cancella filtri" rimuove tutti i filtri avanzati/rapidi in un colpo.
+22. **`?` sul prezzo di un giocatore** (es. Lautaro Martinez): il pannello deve mostrare dati
+    utilizzati, fattori in linguaggio semplice, risultato con badge "PROVVISORIO" — mai la
+    formula grezza come prima cosa (quella resta in "Dettagli tecnici", collassata).
+23. **`?` su RAT, POT, Titolarità, Bonus attesi** nell'intestazione: deve comparire una
+    spiegazione chiara in linguaggio semplice.
+24. **Stella ⭐**: verifica che si mantenga cliccando/filtrando/ordinando e dopo un
+    reset dei filtri.
 
 Questi scenari sono stati verificati anche con uno script di test automatico della logica di
 import/merge/matching, usato in fase di sviluppo (non incluso nel bundle dell'app perché non
-serve all'utente finale).
+serve all'utente finale). Per lo Sprint 2.5, lo script ha usato dati costruiti a partire dagli
+esempi reali forniti nel brief (Nome/RAT/POT/IS %/ETA'/Ruolo standard/Ruolo trequartista/
+Ruolo Fantacalcio.it/Posizione/Squadra/Kapitals/Bonus), perché il file xlsx reale non era
+allegato in questa conversazione: se lo alleghi in un turno successivo verificherò l'import
+sul file vero.
