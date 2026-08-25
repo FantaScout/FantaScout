@@ -31,27 +31,59 @@ const DEFAULT_CONFIG = {
   // Serie A dovesse rettificare qualcosa, basta cambiarlo qui o in-app,
   // senza toccare il codice.
   promotedTeams: ['Venezia', 'Frosinone', 'Monza'],
-  // Coefficienti del modello di prezzo - MODIFICABILI dalle Impostazioni.
-  // Tutti i moltiplicatori sono relativi (1 = neutro).
+  // ============================================================
+  // SPRINT 3 - FANTASCOUT INTELLIGENCE ENGINE
+  // Coefficienti del nuovo motore (js/scouting.js). MODIFICABILI dalle
+  // Impostazioni (i piu' rilevanti) o qui per un accesso completo.
+  // Nessun numero magico nel motore: tutto passa da qui.
+  // ============================================================
   pricing: {
-    // quanto pesa il FantaIndex Rating sul prezzo ideale (per punto sopra/sotto 6.00)
-    ratingWeight: 0.18,
-    // quanto pesa il FantaIndex Titolarita' (0-100) sul prezzo ideale (scostamento da 60)
-    ownershipWeight: 0.010,
-    // margine percentuale dal prezzo ideale al prezzo massimo
-    maxBidMargin: 0.28,
-    // margine percentuale dal prezzo massimo allo stop (soglia oltre cui lasciar andare)
-    stopMargin: 0.06,
-    // scarsita' di ruolo: moltiplicatore applicato al prezzo ideale
-    roleScarcity: { P: 0.85, D: 0.95, C: 1.05, A: 1.10 },
-    // bonus moltiplicativo per indice rivelazione alto (0-100 scala, applicato oltre soglia)
-    revelationThreshold: 65,
-    revelationBonus: 0.12,
-    // bonus per giocatori di neopromosse ritenuti sottovalutati (indice affare alto)
-    promotedRiskDiscount: 0.06,
-    // sconto di rischio se titolarita' bassa o assente
-    lowOwnershipThreshold: 45,
-    lowOwnershipDiscount: 0.15
+    // Pesi dell'Indice FantaScout (0-1, devono sommare a ~1 per ruolo).
+    // 'C_OFF' = centrocampisti offensivi (trequartisti/ali), pesati come
+    // profili piu' vicini agli attaccanti sui Bonus attesi.
+    fantaScoutWeights: {
+      P:     { rating: 0.45, potential: 0.15, ownership: 0.30, bonusAttesi: 0.05, age: 0.05 },
+      D:     { rating: 0.35, potential: 0.15, ownership: 0.25, bonusAttesi: 0.15, age: 0.10 },
+      C:     { rating: 0.30, potential: 0.15, ownership: 0.20, bonusAttesi: 0.25, age: 0.10 },
+      C_OFF: { rating: 0.25, potential: 0.15, ownership: 0.15, bonusAttesi: 0.35, age: 0.10 },
+      A:     { rating: 0.25, potential: 0.15, ownership: 0.15, bonusAttesi: 0.35, age: 0.10 }
+    },
+    // Pesi dell'Indice Modificatore Difesa (solo D): nessun dato difensivo
+    // non presente nella fonte (clean sheet, xG contro...) viene inventato.
+    modifierWeights: { rating: 0.50, potential: 0.20, ownership: 0.30 },
+    // Pesi dell'Indice Rivelazione.
+    revelation: {
+      ageWeight: 0.20,
+      potentialWeight: 0.25,
+      ratingWeight: 0.15,
+      bonusVsPriceWeight: 0.40,
+      // sotto questa titolarita' (%) l'indice viene compresso proporzionalmente
+      ownershipGateThreshold: 35
+    },
+    // Modello di mercato per Prezzo Ideale/Massimo/Stop (vedi scouting.js).
+    market: {
+      // quota del budget totale di lega (partecipanti x budget) riservata
+      // a ciascun ruolo - convenzione di mercato generale, NON legata alla
+      // rosa che l'utente comprera' effettivamente.
+      roleBudgetShare: { P: 0.08, D: 0.20, C: 0.32, A: 0.40 },
+      // quanto la quotazione (oltre all'Indice FantaScout) pesa nel
+      // determinare la "desiderabilita'" relativa di un giocatore nel
+      // proprio ruolo (0 = ignora la quotazione, 1 = solo quotazione)
+      quotationInfluence: 0.12,
+      // decadimento geometrico del prezzo lungo il ranking di ruolo
+      // (peso(rank) = e^(-rankDecay * rank), rank 0-based): piu' alto =
+      // differenze di prezzo piu' marcate tra i primi posti e il resto,
+      // indipendentemente da quanti giocatori ha il listone importato.
+      rankDecay: 0.045
+    },
+    // margine base dal Prezzo Ideale al Prezzo Massimo (poi modulato
+    // dall'Indice Affare, vedi computeMargin in scouting.js)
+    maxBidMargin: 0.20,
+    // margine dal Prezzo Massimo allo Stop
+    stopMargin: 0.08,
+    // soglia dell'Indice Rivelazione oltre cui il filtro rapido "🚀
+    // Rivelazioni" mostra il giocatore
+    revelationThreshold: 65
   }
 };
 
@@ -87,9 +119,10 @@ const COLUMN_DEFS = [
   { key: 'ownership',   label: 'Titol.',               sort: 'ownership',   info: 'ownership' },
   { key: 'age',         label: 'Età',                  sort: 'age',         info: 'age',         secondary: true },
   { key: 'bonusAttesi', label: 'Bonus',                sort: 'bonusAttesi', info: 'bonusAttesi', secondary: true },
-  { key: 'idealPrice',  label: 'Ideale ⚠️',            sort: 'idealPrice',  info: 'idealPrice' },
-  { key: 'maxBid',      label: 'Massimo ⚠️',           sort: 'maxBid',      info: 'maxBid' },
-  { key: 'valueIndex',  label: 'Indice FantaScout',    sort: 'valueIndex',  info: 'valueIndex' },
+  { key: 'idealPrice',  label: 'Ideale',                sort: 'idealPrice',  info: 'idealPrice' },
+  { key: 'maxBid',      label: 'Massimo',               sort: 'maxBid',      info: 'maxBid' },
+  { key: 'fantaScoutIndex', label: 'Indice FantaScout', sort: 'fantaScoutIndex', info: 'fantaScoutIndex' },
+  { key: 'affareIndex', label: 'Indice Affare',        sort: 'affareIndex', info: 'affareIndex', secondary: true },
   { key: 'note',        label: 'Note',                 sort: null,          secondary: true }
 ];
 
@@ -115,7 +148,7 @@ const TOOLTIPS = {
   },
   potential: {
     title: 'Potenziale (POT)',
-    body: 'Potenziale stimato del giocatore secondo Fantacalcio-Online (0-100). È un dato informativo: al momento non entra nel calcolo di Prezzo Ideale/Massimo (vedi il pannello "Come viene calcolato" per i fattori realmente usati).'
+    body: 'Potenziale stimato del giocatore secondo Fantacalcio-Online (0-100). Contribuisce all\'Indice FantaScout e all\'Indice Rivelazione (vedi il pannello "Come viene calcolato" per i pesi usati per questo giocatore).'
   },
   ownership: {
     title: 'Titolarità (IS %)',
@@ -131,19 +164,23 @@ const TOOLTIPS = {
   },
   idealPrice: {
     title: 'Prezzo Ideale',
-    body: '⚠️ Valutazione provvisoria. Stima di quanto pagare per aggiudicarsi il giocatore in condizioni normali d\'asta, secondo il modello attualmente in uso. Il modello dei prezzi verrà riprogettato nello Sprint 3: fino ad allora questi numeri possono risultare fuori scala rispetto al tuo budget.'
+    body: 'Quanto ha senso offrire per questo giocatore in condizioni normali d\'asta, calibrato sulla configurazione della tua lega (partecipanti, budget, asta a chiamata, strategia equilibrata). Non è "quotazione x coefficiente": nasce dal confronto tra tutti i giocatori dello stesso ruolo nel listone importato.'
   },
   maxBid: {
     title: 'Prezzo Massimo',
-    body: '⚠️ Valutazione provvisoria. Soglia oltre la quale il modello consiglia cautela nei rilanci. Vale la stessa nota del Prezzo Ideale: il modello verrà riprogettato nello Sprint 3.'
+    body: 'Soglia oltre la quale conviene iniziare a essere cauti nei rilanci. Il margine rispetto al Prezzo Ideale si allarga per i giocatori che l\'Indice Affare segnala come sottovalutati, e si stringe per quelli già vicini al loro valore.'
   },
   stopPrice: {
     title: 'Stop',
-    body: '⚠️ Valutazione provvisoria. Soglia oltre la quale il modello consiglia di lasciar andare il giocatore. Vale la stessa nota del Prezzo Ideale.'
+    body: 'Il vero limite operativo: oltre questa cifra il modello consiglia di lasciar andare il giocatore, indipendentemente da quanto sembri interessante.'
   },
-  valueIndex: {
+  fantaScoutIndex: {
     title: 'Indice FantaScout',
-    body: 'Punteggio sintetico da 0 a 100 usato dall\'app per confrontare rapidamente i giocatori tra loro, sulla base dei dati disponibili (rating, titolarità e quotazione). NON rappresenta crediti e NON corrisponde al prezzo d\'asta: serve solo per ordinare/confrontare, non per decidere quanto spendere.'
+    body: 'Punteggio sintetico da 0 a 100 che misura quanto è interessante il PROFILO del giocatore, sulla base dei dati disponibili (rating, potenziale, titolarità, bonus attesi ed età, pesati in modo diverso per ruolo). NON dipende dalla quotazione e NON rappresenta crediti: serve per capire "quanto è forte", non "quanto conviene pagarlo" (per quello vedi Indice Affare).'
+  },
+  affareIndex: {
+    title: 'Indice Affare',
+    body: 'Punteggio da 0 a 100 che misura quanto il giocatore è sottovalutato ECONOMICAMENTE: confronta il suo Indice FantaScout con la sua quotazione, entrambi rispetto agli altri giocatori dello stesso ruolo. Un valore alto segnala un profilo forte a una quotazione bassa per il ruolo.'
   },
   modifierIndex: {
     title: 'Indice Modificatore Difesa',
@@ -176,11 +213,13 @@ const FILTER_FIELDS = [
     operators: ['gt', 'lt', 'between'], getValue: p => p.bonusAttesi },
   { key: 'quotation', label: 'Quotazione', type: 'number', calc: false,
     operators: ['gt', 'lt', 'between'], getValue: p => p.quotation },
-  { key: 'valueIndex', label: 'Indice FantaScout', type: 'number', calc: true,
-    operators: ['gt', 'lt', 'between'], getValue: p => p.calc.valueIndex },
-  { key: 'idealPrice', label: 'Prezzo Ideale ⚠️', type: 'number', calc: true,
+  { key: 'fantaScoutIndex', label: 'Indice FantaScout', type: 'number', calc: true,
+    operators: ['gt', 'lt', 'between'], getValue: p => p.calc.fantaScoutIndex },
+  { key: 'affareIndex', label: 'Indice Affare', type: 'number', calc: true,
+    operators: ['gt', 'lt', 'between'], getValue: p => p.calc.affareIndex },
+  { key: 'idealPrice', label: 'Prezzo Ideale', type: 'number', calc: true,
     operators: ['gt', 'lt', 'between'], getValue: p => p.calc.idealPrice },
-  { key: 'maxBid', label: 'Prezzo Massimo ⚠️', type: 'number', calc: true,
+  { key: 'maxBid', label: 'Prezzo Massimo', type: 'number', calc: true,
     operators: ['gt', 'lt', 'between'], getValue: p => p.calc.maxBid },
   { key: 'favorite', label: 'Preferito', type: 'bool', calc: false,
     operators: ['eq'], getValue: p => !!(p.personal && p.personal.favorite) },

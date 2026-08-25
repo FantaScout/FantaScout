@@ -22,8 +22,18 @@ freccia ↑/↓ ed è a 3 stati (decrescente → crescente → nessun ordinament
 "Come viene calcolato?" del prezzo è stato riscritto in linguaggio semplice (le formule
 restano disponibili in una sezione secondaria "Dettagli tecnici"). **Non ha toccato** il
 modello matematico dei prezzi (stessi coefficienti, stessi numeri): li mostra solo in modo
-più onesto, con un'etichetta "⚠️ provvisorio" ovunque compaiano, perché saranno
+più onesto, con un'etichetta "⚠️ provvisorio" ovunque compaiano, perché sarebbero stati
 riprogettati nello Sprint 3.
+
+**Sprint 3** ha riprogettato **da zero** il motore di scouting/pricing (vedi punto 9): il
+vecchio modello trattava il Rating come se fosse su scala 6-9 invece che 0-100, producendo
+prezzi assurdi ("Lautaro → Prezzo Ideale 1137" con budget personale 500). Il nuovo motore
+introduce l'**Indice FantaScout** (qualità del profilo, separato dal prezzo) e l'**Indice
+Affare** (sottovalutazione economica, prima confuso con l'Indice FantaScout), normalizza i
+Bonus attesi sulla distribuzione reale del listone invece che su una scala arbitraria, e
+calcola Prezzo Ideale/Massimo/Stop con un modello di mercato calibrato su budget e
+partecipanti della lega (non più "quotazione × coefficiente"). Tutte le funzionalità degli
+sprint precedenti (import, filtri, ordinamento, preferiti, asta) restano invariate.
 
 ---
 
@@ -215,43 +225,115 @@ avversario, o messo tra i preferiti).
 
 ---
 
-## 9. Come funziona il modello prezzi
+## 9. Come funziona il motore di scouting/prezzi (Sprint 3)
 
-Non è una formula segreta: è in `js/scouting.js` → `computePricing()`, con tutti i
-coefficienti centralizzati in `js/config.js` (e modificabili dalle Impostazioni in-app).
+Riprogettato da zero in `js/scouting.js` (modulo `Scouting.enrichAll()`). Tutti i
+coefficienti sono centralizzati in `js/config.js` → `DEFAULT_CONFIG.pricing` (i più
+rilevanti sono modificabili anche dalle Impostazioni in-app). **Nessun numero magico nel
+motore.**
 
-**Punto di partenza**: la quotazione ufficiale del giocatore. Da lì si applicano
-moltiplicatori **solo per i dati realmente disponibili**:
+Il vecchio modello (Sprint 2.x) trattava il Rating come se fosse su una scala 6-9 (tipica di
+altre fonti), mentre RAT/POT di Fantacalcio-Online sono su scala 0-100: il risultato erano
+prezzi assurdi (es. "Lautaro → Prezzo Ideale 1137" con un budget personale di 500). Il nuovo
+motore non "corregge il numero 6.00": è un modello diverso, spiegato qui sotto.
 
-- scostamento del FantaIndex Rating dalla media di riferimento (6.00);
-- scostamento della FantaIndex Titolarità dalla soglia di riferimento (60%), con uno sconto
-  di rischio aggiuntivo sotto una soglia minima (titolarità bassa = rischio panchina);
-- scarsità di ruolo (coefficiente per P/D/C/A — pensato per una lega da 8 partecipanti,
-  dove la profondità di rosa disponibile per ogni ruolo è alta: il coefficiente non
-  esaspera la scarsità come farebbe in una lega da 10-12 squadre);
-- bonus se l'Indice Rivelazione supera una soglia (potenziale rendimento sopra il prezzo,
-  **non** "è giovane quindi rivelazione" — vedi sotto);
-- sconto di rischio per i giocatori delle neopromosse (incognita di adattamento alla
-  categoria superiore).
+### 9.1 Normalizzazione dei dati grezzi
 
-Il **Prezzo Massimo** è il Prezzo Ideale + un margine percentuale (di default 28%); lo
-**Stop** è il Prezzo Massimo + un ulteriore margine (di default 6%). Tutti i margini sono
-modificabili dalle Impostazioni. Il budget di lega (8 partecipanti × 500 crediti = 4000
-crediti totali) non entra come costante rigida nella formula per-giocatore — la sua funzione
-è più che altro di controllo a valle: la Dashboard e la vista Asta mostrano budget residuo e
-slot di rosa liberi in tempo reale, così puoi confrontare quanto stai spendendo con quanto ti
-resta e per quanti giocatori.
+- **RAT, POT, Titolarità (IS %)**: sono già scale 0-100 fornite dalla fonte → si
+  normalizzano per **divisione diretta** (`84 → 0.84`).
+- **Bonus attesi**: **non** è una scala 0-100, è un conteggio senza limite superiore noto.
+  Si normalizza calcolando il suo **percentile all'interno della distribuzione reale del
+  listone importato** (per ruolo): un bonus atteso di 20 vale molto se la maggior parte dei
+  giocatori del ruolo ha valori molto inferiori, poco altrimenti. Questo evita di inventare
+  una scala arbitraria — vedi `computeDatasetStats()`, che calcola min/max/media/mediana e
+  percentili 25/50/75/90/95 per RAT, POT, Titolarità, Bonus attesi e Quotazione, complessivi
+  e per ruolo, PRIMA di qualunque normalizzazione.
+- **Età**: curva morbida (`(33 - età) / 20`, troncata 0-1): pesa sempre poco e non decide mai
+  da sola nulla.
 
-In tabella, il pulsante `?` accanto al Prezzo Massimo mostra la spiegazione riga per riga di
-come è stato calcolato per quel giocatore specifico.
+### 9.2 Dati mancanti
 
-Se manca la quotazione, l'app non calcola nulla e mostra N/D.
+Un fattore N/D **non entra nel calcolo**, non viene mai trattato come 0 né stimato: i pesi
+dei fattori rimasti vengono ricalibrati proporzionalmente (`weightedAverage()` in
+`scouting.js`). La UI mostra quanti fattori sono stati effettivamente usati (es. "4/5"). Se
+**nessun** fattore è disponibile, l'Indice è esplicitamente N/D — mai 0.
+
+### 9.3 Indice FantaScout (0-100)
+
+Misura **quanto è forte il profilo** del giocatore, indipendentemente dal prezzo. Combina,
+con pesi diversi per ruolo (`fantaScoutWeights` in config.js), Rating, Potenziale,
+Titolarità, Bonus attesi ed Età:
+
+| Ruolo | Rating | Potenziale | Titolarità | Bonus attesi | Età |
+|---|---|---|---|---|---|
+| P | 45% | 15% | 30% | 5% | 5% |
+| D | 35% | 15% | 25% | 15% | 10% |
+| C | 30% | 15% | 20% | 25% | 10% |
+| C offensivo* | 25% | 15% | 15% | 35% | 10% |
+| A | 25% | 15% | 15% | 35% | 10% |
+
+\* Centrocampisti con `Posizione`/`Ruolo trequartista` che indicano un profilo offensivo
+(trequartista, ala) vengono pesati come attaccanti sui Bonus attesi, senza cambiare il loro
+Ruolo Classic (restano "C" in tutta l'app).
+
+### 9.4 Indice Modificatore Difesa (0-100, solo D)
+
+Separato dall'Indice FantaScout. Usa solo Rating, Potenziale e Titolarità (pesi 50/20/30%):
+**nessuna statistica difensiva non presente nel dataset viene inventata** (niente clean
+sheet, niente xG contro — non sono nel listone importato).
+
+### 9.5 Indice Rivelazione (0-100)
+
+Combina età (peso 20%), percentile del Potenziale nel ruolo (25%), Rating (15%) e un
+rapporto **Bonus attesi / Quotazione** confrontato con la distribuzione del ruolo (40% —
+"bonus attesi interessanti rispetto alla quotazione"). Un **cancello sulla titolarità**
+comprime fortemente il punteggio sotto una soglia (default 35%): un ventiduenne con POT alto
+ma titolarità 15% **non** risulta automaticamente una grande rivelazione (verificato nei test
+automatici, vedi punto 14).
+
+### 9.6 Indice Affare (0-100)
+
+Distinto dall'Indice FantaScout: misura **quanto il giocatore è sottovalutato
+economicamente**. Confronta il percentile di qualità (Indice FantaScout) con il percentile
+di quotazione, **entrambi calcolati all'interno dello stesso ruolo**: qualità sopra la media
+del ruolo + quotazione sotto la media del ruolo = affare. Un giocatore fortissimo ma già
+quotato alto avrà un Indice FantaScout alto ma un Indice Affare medio; un giocatore meno
+forte ma quotato pochissimo può avere un Affare più alto di un top player costoso.
+
+### 9.7 Prezzo Ideale / Prezzo Massimo / Stop
+
+**Non è mai "quotazione × coefficiente".** È un modello di mercato in tre passi:
+
+1. Il budget totale della lega (**partecipanti × budget**, es. 8 × 500 = 4000 crediti) viene
+   ripartito **tra i ruoli** secondo una convenzione economica generale
+   (`market.roleBudgetShare`: P 8%, D 20%, C 32%, A 40% di default) — **non** legata alla
+   composizione della rosa dell'utente, che questo sprint non usa e non chiede.
+2. All'interno di ogni ruolo, i giocatori vengono **ordinati** per "desiderabilità"
+   (soprattutto Indice FantaScout, per una piccola parte — default 12% — la quotazione come
+   punto di riferimento economico, non come determinante).
+3. Il pool di budget del ruolo viene distribuito lungo quell'ordine con una **curva a
+   decadimento geometrico sul ranking** (`market.rankDecay`): il rank 1 del ruolo riceve la
+   quota maggiore, poi si scende. La coda (giocatori marginali il cui peso sarebbe
+   trascurabile) si distribuisce comunque su una piccola fascia di prezzi bassi ma distinti,
+   per evitare che centinaia di giocatori finiscano tutti allo stesso prezzo minimo.
+
+Il **Prezzo Massimo** parte dal Prezzo Ideale con un margine base (`maxBidMargin`, default
+20%) **modulato dall'Indice Affare**: un vero affare (sottovalutato) merita un margine di
+inseguimento più ampio, un giocatore già vicino al proprio valore (o sopravvalutato) un
+margine più stretto. Lo **Stop** è il Prezzo Massimo + un margine ulteriore (`stopMargin`,
+default 8%). Tutti e tre sono sempre vincolati a **1 ≤ prezzo ≤ budget personale**.
+
+Se manca la quotazione, o non c'è abbastanza dato per calcolare l'Indice FantaScout, il
+prezzo resta esplicitamente N/D (mai un numero inventato).
+
+Il pulsante `?` accanto al Prezzo Massimo mostra, per quel giocatore, quali fattori hanno
+influenzato il calcolo, la sua posizione nel ranking di ruolo e la quota di budget assegnata.
 
 ### Importante: cosa NON è il Prezzo Massimo
 
-L'asta della tua lega è **a rilancio**: il prezzo reale pagato dipende da quanto rilanciano
+L'asta della tua lega è **a chiamata**: il prezzo reale pagato dipende da quanto rilanciano
 gli altri 7 partecipanti, non da una formula. Il modello **non dice** "questo giocatore vale
-23": dice "con le impostazioni della tua lega, 23 è il limite oltre il quale, secondo questo
+71": dice "con le impostazioni della tua lega, 71 è il limite oltre il quale, secondo questo
 modello, rischi di pagarlo più di quanto valga per te". È uno strumento di supporto
 decisionale, non una previsione matematica certa.
 
@@ -269,12 +351,14 @@ centralizzate in `js/config.js` → `TOOLTIPS`, cosi' restano coerenti in tutte 
 - **RAT / POT / Titol. / Bonus / Età**: dati che arrivano cosi' come sono da
   Fantacalcio-Online (vedi punto 3bis). "N/D" quando la fonte non li fornisce — mai un
   valore inventato o messo a 0.
-- **Indice FantaScout** (ex "Valore"): la vecchia etichetta era ambigua — sembrava un
-  prezzo, ma è un punteggio sintetico 0-100 calcolato da `Scouting.computeValueIndex()`
-  per confrontare rapidamente i giocatori tra loro (rating + titolarità + quotazione).
-  **Non è un prezzo e non rappresenta crediti.**
-- **Prezzo Ideale / Prezzo Massimo**: sempre accompagnati dal badge ⚠️, che indica
-  valutazione **provvisoria** (vedi "Importante" sopra e nota nel pannello `?`).
+- **Indice FantaScout**: punteggio sintetico 0-100 che misura quanto è forte il PROFILO del
+  giocatore (rating, potenziale, titolarità, bonus attesi, età — vedi punto 9.3). **Non
+  dipende dalla quotazione e non rappresenta crediti.**
+- **Indice Affare**: punteggio 0-100 che misura quanto il giocatore è sottovalutato
+  economicamente rispetto al proprio Indice FantaScout (vedi punto 9.6). Colonna secondaria,
+  nascosta sugli schermi piccoli.
+- **Prezzo Ideale / Prezzo Massimo**: calcolati dal motore descritto al punto 9. Il pulsante
+  `?` accanto al Prezzo Massimo apre la spiegazione dettagliata per quel giocatore.
 
 ### Filtri combinabili
 
@@ -289,9 +373,10 @@ I filtri rapidi (Tutti / Portieri / Difensori / Centrocampisti / Attaccanti / �
 sono lo stesso identico meccanismo: cliccarli aggiunge/toglie un filtro dal pannello, quindi
 sono sempre compatibili con i filtri avanzati (es. clicco "Attaccanti", poi aggiungo
 "Titolarità ≥ 75%": il sistema applica entrambe le condizioni). I campi disponibili — Ruolo,
-Squadra, RAT, POT, Titolarità, Età, Bonus attesi, Quotazione, Indice FantaScout, Prezzo
-Ideale, Prezzo Massimo, Preferito, Neopromossa, Disponibilità — sono centralizzati in
-`js/config.js` → `FILTER_FIELDS`, con la logica di valutazione in `js/filters.js`.
+Squadra, RAT, POT, Titolarità, Età, Bonus attesi, Quotazione, Indice FantaScout, Indice
+Affare, Prezzo Ideale, Prezzo Massimo, Preferito, Neopromossa, Disponibilità — sono
+centralizzati in `js/config.js` → `FILTER_FIELDS`, con la logica di valutazione in
+`js/filters.js`.
 
 ### Ordinamento
 
@@ -382,7 +467,9 @@ smartphone in mobilità.
 /js/storage.js        persistenza localStorage, dati REMOTI separati dai dati PERSONALI
 /js/data.js           normalizzazione giocatore, matching/risoluzione ID, merge remoto/personale/indici
 /js/filters.js         motore filtri avanzati combinabili (AND) - Sprint 2.6, usa FILTER_FIELDS/OPERATORS di config.js
-/js/scouting.js       modello di pricing + indici (rivelazione, modificatore, affare)
+/js/scouting.js       motore Sprint 3: statistiche dataset, Indice FantaScout, Indice
+                      Affare, Indice Modificatore Difesa, Indice Rivelazione, Prezzo
+                      Ideale/Massimo/Stop (vedi punto 9)
 /js/importer.js       lettura XLSX/CSV/JSON, riconoscimento colonne, anteprima, import listone/indici
 /js/auction.js        stato asta live: budget, rosa per ruolo, acquisto giocatori
 /js/app.js            controller UI: navigazione, tabelle, filtri, modali, flusso di import
@@ -431,18 +518,42 @@ smartphone in mobilità.
     nessun ordinamento (torna l'ordine non ordinato).
 20. **Cambiare filtro senza perdere l'ordinamento** e viceversa.
 21. **Reset filtri**: "Cancella filtri" rimuove tutti i filtri avanzati/rapidi in un colpo.
-22. **`?` sul prezzo di un giocatore** (es. Lautaro Martinez): il pannello deve mostrare dati
-    utilizzati, fattori in linguaggio semplice, risultato con badge "PROVVISORIO" — mai la
-    formula grezza come prima cosa (quella resta in "Dettagli tecnici", collassata).
+22. **`?` sul prezzo di un giocatore** (es. Lautaro Martinez): il pannello deve mostrare
+    Indice FantaScout, Indice Affare, fattori in linguaggio semplice e il risultato
+    (Ideale/Massimo/Stop) — mai la formula grezza come prima cosa (quella resta in "Dettagli
+    tecnici", collassata).
 23. **`?` su RAT, POT, Titolarità, Bonus attesi** nell'intestazione: deve comparire una
     spiegazione chiara in linguaggio semplice.
 24. **Stella ⭐**: verifica che si mantenga cliccando/filtrando/ordinando e dopo un
     reset dei filtri.
 
-Questi scenari sono stati verificati anche con uno script di test automatico della logica di
-import/merge/matching, usato in fase di sviluppo (non incluso nel bundle dell'app perché non
-serve all'utente finale). Per lo Sprint 2.5, lo script ha usato dati costruiti a partire dagli
-esempi reali forniti nel brief (Nome/RAT/POT/IS %/ETA'/Ruolo standard/Ruolo trequartista/
-Ruolo Fantacalcio.it/Posizione/Squadra/Kapitals/Bonus), perché il file xlsx reale non era
-allegato in questa conversazione: se lo alleghi in un turno successivo verificherò l'import
-sul file vero.
+### Test Sprint 3 (motore di scouting/prezzi)
+
+25. **Nessun prezzo fuori scala**: dopo un import completo, ordina per Prezzo Massimo
+    decrescente: il primo valore non deve mai superare il budget di lega (500 di default).
+26. **Nessun prezzo sotto 1**: ordina per Prezzo Ideale crescente: il minimo deve essere 1,
+    mai 0 o negativo.
+27. **Rating N/D**: importa/modifica un giocatore senza Rating; il pannello `?` deve mostrare
+    "dataUsed" inferiore a 5/5 e continuare a calcolare un Indice FantaScout, mai a 0.
+28. **Tutti i dati N/D tranne la quotazione**: l'Indice FantaScout e i prezzi devono
+    risultare esplicitamente N/D, con un motivo leggibile, non un numero a caso.
+29. **Rivelazioni**: filtra 🚀 Rivelazioni e verifica che non compaiano giovani con
+    titolarità molto bassa (es. <20%) in cima alla lista, anche se POT è molto alto.
+30. **Affari**: nella scheda 💎 Affari, il primo giocatore deve avere una quotazione
+    relativamente bassa rispetto al proprio Indice FantaScout, non semplicemente la
+    quotazione più bassa in assoluto.
+31. **Modificatore Difesa**: solo i difensori compaiono nella scheda 🛡️; un attaccante deve
+    mostrare "Applicabile solo ai difensori" se interrogato.
+32. **Coerenza**: confronta due giocatori dello stesso ruolo con Indice FantaScout molto
+    diverso (es. differenza ≥15 punti): a parità di quotazione, quello con indice più alto
+    deve avere Prezzo Ideale più alto.
+
+Questi scenari sono stati verificati anche con script di test automatico della logica di
+import/merge/matching e, per lo Sprint 3, con un motore di test dedicato (12 test di sanità
+sul prezzo + 12 test unitari sulla normalizzazione/gestione dati mancanti + test di
+robustezza su dati fortemente incompleti), eseguiti su un dataset sintetico di 615
+giocatori costruito rispettando le distribuzioni plausibili di un vero listone
+Fantacalcio-Online e includendo i 3 giocatori reali forniti nel brief (Lautaro Martinez,
+Nico Paz, McTominay) — non inclusi nel bundle dell'app perché servono solo in fase di
+sviluppo. Il file xlsx reale non era allegato in questa conversazione: se lo alleghi in un
+turno successivo verificherò l'import e i risultati sul listone vero.

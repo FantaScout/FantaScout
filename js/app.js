@@ -59,7 +59,7 @@ const App = (() => {
     const remote = DataModel.applyPromotedFlag(Storage.getRemotePlayers(), config.promotedTeams);
     const personal = Storage.getPersonalData();
     const joined = DataModel.joinWithPersonal(remote, personal);
-    players = joined.map(p => Scouting.enrichPlayer(p, config));
+    players = Scouting.enrichAll(joined, config);
   }
 
   function renderAll() {
@@ -95,16 +95,12 @@ const App = (() => {
   }
 
   /* ---------------- PLAYERS TABLE (shared renderer) ---------------- */
-  // Badge "⚠️ provvisorio" accanto ai prezzi: il modello verra'
-  // riprogettato nello Sprint 3 (vedi REGOLA FONDAMENTALE, Sprint 2.6).
-  function provisionalBadge() {
-    return ' <span class="badge-provisional" title="Valutazione provvisoria: modello prezzi in revisione (Sprint 3)">⚠️</span>';
-  }
 
   function playerRow(p, opts) {
     opts = opts || {};
     const c = p.calc;
-    const valueBadge = valueBadgeHtml(c.valueIndex);
+    const fsBadge = valueBadgeHtml(c.fantaScoutIndex);
+    const affareBadge = valueBadgeHtml(c.affareIndex);
     return `<tr data-id="${escapeAttr(p.id)}">
       <td><button class="star-btn" data-fav="${escapeAttr(p.id)}">${p.personal.favorite ? '⭐' : '☆'}</button></td>
       <td>${escapeHtml(p.fullName)}${p.isPromoted ? ' <span class="badge" style="background:#333;color:#9fe6a0">NEO</span>' : ''}${p.missingFromLastUpdate ? ' <span class="badge badge-missing" title="Non presente nell\'ultimo aggiornamento importato">⚠️ non presente</span>' : ''}</td>
@@ -116,11 +112,12 @@ const App = (() => {
       <td class="num">${p.ownership !== null ? p.ownership + '%' : '<span class="na">N/D</span>'}</td>
       <td class="num col-secondary">${fmtNum(p.age)}</td>
       <td class="num col-secondary">${fmtNum(p.bonusAttesi)}</td>
-      <td class="num">${fmtNum(c.idealPrice)}${c.idealPrice !== null ? provisionalBadge() : ''}</td>
-      <td class="num">${fmtNum(c.maxBid)}${c.maxBid !== null ? provisionalBadge() : ''}
+      <td class="num">${fmtNum(c.idealPrice)}</td>
+      <td class="num">${fmtNum(c.maxBid)}
         <button class="btn-tooltip" data-tooltip="${escapeAttr(p.id)}" title="Come viene calcolato?">?</button>
       </td>
-      <td>${valueBadge}</td>
+      <td>${fsBadge}</td>
+      <td class="num col-secondary">${affareBadge}</td>
       <td class="num col-secondary">${p.personal.personalNote ? '📝' : ''}</td>
       ${opts.showBuy ? `<td>${p.personal.purchased ? '✅ Tuo' : `<button class="btn-buy" data-buy="${escapeAttr(p.id)}">💰 Acquista</button>`}</td>` : ''}
     </tr>`;
@@ -357,7 +354,7 @@ const App = (() => {
   function renderPlayersTable(sortKey) {
     const list = applySort(filteredPlayers(playersFilterState), sortKey, 'players');
     const wrap = document.getElementById('playersTableWrap');
-    wrap.innerHTML = `<table><thead>${tableHeader('players')}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(14)}</tbody></table>`;
+    wrap.innerHTML = `<table><thead>${tableHeader('players')}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(15)}</tbody></table>`;
     bindSortableHeaders(wrap, renderPlayersTable);
     bindRowActions(wrap);
   }
@@ -371,7 +368,7 @@ const App = (() => {
   function renderFavoritesTable(sortKey) {
     const list = applySort(players.filter(p => p.personal.favorite), sortKey, 'favorites');
     const wrap = document.getElementById('favoritesTableWrap');
-    wrap.innerHTML = `<table><thead>${tableHeader('favorites')}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(14, 'Nessun preferito ancora. Clicca la stella ☆ nella tabella Giocatori.')}</tbody></table>`;
+    wrap.innerHTML = `<table><thead>${tableHeader('favorites')}</thead><tbody>${list.map(p => playerRow(p)).join('') || emptyRow(15, 'Nessun preferito ancora. Clicca la stella ☆ nella tabella Giocatori.')}</tbody></table>`;
     bindSortableHeaders(wrap, renderFavoritesTable);
     bindRowActions(wrap);
   }
@@ -390,13 +387,13 @@ const App = (() => {
       wrap.innerHTML = scoutingTable(list, 'revelationIndex', '🚀 Indice Rivelazione');
     } else if (currentScoutingTab === 'promoted') {
       const list = players.filter(p => p.isPromoted)
-        .sort((a, b) => (b.calc.valueIndex ?? -1) - (a.calc.valueIndex ?? -1));
+        .sort((a, b) => (b.calc.affareIndex ?? -1) - (a.calc.affareIndex ?? -1));
       wrap.innerHTML = `<p class="priority-note">Squadre neopromosse in Serie A 2026/27: ${config.promotedTeams.join(', ')}.</p>` +
-        scoutingTable(list, 'valueIndex', '💎 Miglior Affare');
+        scoutingTable(list, 'affareIndex', '💎 Miglior Affare');
     } else if (currentScoutingTab === 'deals') {
-      const list = players.filter(p => p.calc.valueIndex !== null)
-        .sort((a, b) => b.calc.valueIndex - a.calc.valueIndex).slice(0, 100);
-      wrap.innerHTML = scoutingTable(list, 'valueIndex', '💎 Indice Affare', true);
+      const list = players.filter(p => p.calc.affareIndex !== null)
+        .sort((a, b) => b.calc.affareIndex - a.calc.affareIndex).slice(0, 100);
+      wrap.innerHTML = scoutingTable(list, 'affareIndex', '💎 Indice Affare', true);
     } else if (currentScoutingTab === 'modifier') {
       const list = players.filter(p => p.role === 'D' && p.calc.modifierIndex !== null)
         .sort((a, b) => b.calc.modifierIndex - a.calc.modifierIndex).slice(0, 100);
@@ -423,7 +420,7 @@ const App = (() => {
     </tr>`).join('');
     return `<table><thead><tr>
       <th>#</th><th></th><th>Giocatore</th><th>Ruolo</th><th>Squadra</th>
-      <th>Quot.</th><th>Rating</th><th>Titol.</th><th>Ideale ⚠️</th><th>Massimo ⚠️</th><th>${idxLabel}</th>
+      <th>Quot.</th><th>Rating</th><th>Titol.</th><th>Ideale</th><th>Massimo</th><th>${idxLabel}</th>
       ${withMotivo ? '<th>Motivo</th>' : ''}
     </tr></thead><tbody>${rows}</tbody></table>`;
   }
@@ -480,7 +477,7 @@ const App = (() => {
     });
     list = applySort(list, sortKey, 'auction');
     const wrap = document.getElementById('auctionTableWrap');
-    wrap.innerHTML = `<table><thead>${tableHeader('auction', { showBuy: true })}</thead><tbody>${list.map(p => playerRow(p, { showBuy: true })).join('') || emptyRow(15)}</tbody></table>`;
+    wrap.innerHTML = `<table><thead>${tableHeader('auction', { showBuy: true })}</thead><tbody>${list.map(p => playerRow(p, { showBuy: true })).join('') || emptyRow(16)}</tbody></table>`;
     bindSortableHeaders(wrap, renderAuctionTable);
     bindRowActions(wrap);
   }
@@ -505,14 +502,17 @@ const App = (() => {
         <label>Attaccanti (A) <input type="number" id="sRoleA" value="${config.roster.A}"></label>
       </div>
       <div class="settings-card">
-        <h3>Coefficienti modello di prezzo</h3>
-        <label>Peso rating <input type="number" step="0.01" id="cRatingWeight" value="${config.pricing.ratingWeight}"></label>
-        <label>Peso titolarità <input type="number" step="0.001" id="cOwnershipWeight" value="${config.pricing.ownershipWeight}"></label>
+        <h3>Modello di prezzo (Sprint 3)</h3>
         <label>Margine prezzo massimo <input type="number" step="0.01" id="cMaxMargin" value="${config.pricing.maxBidMargin}"></label>
         <label>Margine stop <input type="number" step="0.01" id="cStopMargin" value="${config.pricing.stopMargin}"></label>
         <label>Soglia indice rivelazione <input type="number" id="cRevelationThreshold" value="${config.pricing.revelationThreshold}"></label>
-        <label>Bonus rivelazione <input type="number" step="0.01" id="cRevelationBonus" value="${config.pricing.revelationBonus}"></label>
-        <label>Sconto rischio neopromossa <input type="number" step="0.01" id="cPromotedDiscount" value="${config.pricing.promotedRiskDiscount}"></label>
+        <label>Peso quotazione nel ranking <input type="number" step="0.05" min="0" max="1" id="cQuotationInfluence" value="${config.pricing.market.quotationInfluence}"></label>
+        <label>Concentrazione prezzi (decadimento per rank) <input type="number" step="0.005" id="cRankDecay" value="${config.pricing.market.rankDecay}"></label>
+        <p class="priority-note">Quote del budget totale di lega per ruolo (devono sommare a 1):</p>
+        <label>Portieri <input type="number" step="0.01" id="cShareP" value="${config.pricing.market.roleBudgetShare.P}"></label>
+        <label>Difensori <input type="number" step="0.01" id="cShareD" value="${config.pricing.market.roleBudgetShare.D}"></label>
+        <label>Centrocampisti <input type="number" step="0.01" id="cShareC" value="${config.pricing.market.roleBudgetShare.C}"></label>
+        <label>Attaccanti <input type="number" step="0.01" id="cShareA" value="${config.pricing.market.roleBudgetShare.A}"></label>
       </div>
       <div class="settings-card">
         <h3>Neopromosse Serie A 2026/27</h3>
@@ -547,13 +547,15 @@ const App = (() => {
     newConfig.roster.D = intVal('sRoleD', newConfig.roster.D);
     newConfig.roster.C = intVal('sRoleC', newConfig.roster.C);
     newConfig.roster.A = intVal('sRoleA', newConfig.roster.A);
-    newConfig.pricing.ratingWeight = floatVal('cRatingWeight', newConfig.pricing.ratingWeight);
-    newConfig.pricing.ownershipWeight = floatVal('cOwnershipWeight', newConfig.pricing.ownershipWeight);
     newConfig.pricing.maxBidMargin = floatVal('cMaxMargin', newConfig.pricing.maxBidMargin);
     newConfig.pricing.stopMargin = floatVal('cStopMargin', newConfig.pricing.stopMargin);
     newConfig.pricing.revelationThreshold = intVal('cRevelationThreshold', newConfig.pricing.revelationThreshold);
-    newConfig.pricing.revelationBonus = floatVal('cRevelationBonus', newConfig.pricing.revelationBonus);
-    newConfig.pricing.promotedRiskDiscount = floatVal('cPromotedDiscount', newConfig.pricing.promotedRiskDiscount);
+    newConfig.pricing.market.quotationInfluence = floatVal('cQuotationInfluence', newConfig.pricing.market.quotationInfluence);
+    newConfig.pricing.market.rankDecay = floatVal('cRankDecay', newConfig.pricing.market.rankDecay);
+    newConfig.pricing.market.roleBudgetShare.P = floatVal('cShareP', newConfig.pricing.market.roleBudgetShare.P);
+    newConfig.pricing.market.roleBudgetShare.D = floatVal('cShareD', newConfig.pricing.market.roleBudgetShare.D);
+    newConfig.pricing.market.roleBudgetShare.C = floatVal('cShareC', newConfig.pricing.market.roleBudgetShare.C);
+    newConfig.pricing.market.roleBudgetShare.A = floatVal('cShareA', newConfig.pricing.market.roleBudgetShare.A);
     newConfig.promotedTeams = document.getElementById('sPromoted').value.split(',').map(s => s.trim()).filter(Boolean);
 
     Storage.saveConfig(newConfig);
@@ -614,7 +616,7 @@ const App = (() => {
     </div>`;
 
     if (c.idealPrice === null) {
-      body += `<div class="explain-section"><p>${escapeHtml((c.priceExplanation || [])[0] || 'Dati insufficienti per calcolare un prezzo.')}</p></div>`;
+      body += `<div class="explain-section"><p>${escapeHtml(c.priceReason || (c.priceExplanation || [])[0] || 'Dati insufficienti per calcolare un prezzo.')}</p></div>`;
     } else {
       body += `<div class="explain-section">
         <h3>Fattori che influenzano la valutazione</h3>
@@ -622,11 +624,13 @@ const App = (() => {
       </div>
       <div class="explain-section explain-result">
         <h3>Risultato attuale</h3>
-        ${dataRow('Prezzo Ideale', fmtNum(c.idealPrice) + ' ⚠️ PROVVISORIO')}
-        ${dataRow('Prezzo Massimo', fmtNum(c.maxBid) + ' ⚠️ PROVVISORIO')}
-        ${dataRow('Stop', fmtNum(c.stopPrice) + '+ ⚠️ PROVVISORIO')}
+        ${dataRow('Indice FantaScout', fmtNum(c.fantaScoutIndex) + '/100')}
+        ${dataRow('Indice Affare', fmtNum(c.affareIndex) + '/100')}
+        ${dataRow('🟢 Prezzo Ideale', fmtNum(c.idealPrice))}
+        ${dataRow('🟡 Prezzo Massimo', fmtNum(c.maxBid))}
+        ${dataRow('🔴 Stop', fmtNum(c.stopPrice) + '+')}
       </div>
-      <p class="explain-note">⚠️ <b>Valutazione provvisoria.</b> Questi prezzi usano il modello attualmente presente nell'app (basato sulla quotazione di partenza). Il modello definitivo verrà riprogettato e parametrizzato sul budget/configurazione della lega nello Sprint 3.</p>`;
+      <p class="explain-note">La stima tiene conto della qualità del giocatore (Indice FantaScout), della sua titolarità, dei bonus attesi, della sua quotazione e del valore relativo degli altri giocatori dello stesso ruolo nel listone. È calibrata sulla configurazione della tua lega: ${config.league.participants} partecipanti, ${config.league.budget} crediti a testa, asta a chiamata, strategia equilibrata.</p>`;
     }
 
     body += `<details class="explain-tech">
