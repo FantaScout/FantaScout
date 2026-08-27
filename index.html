@@ -55,6 +55,17 @@
   <!-- ============ PREFERITI ============ -->
   <section id="view-favorites" class="view">
     <h1 id="favoritesTitle">⭐ Preferiti (0)</h1>
+    <p class="import-explainer">
+      I Preferiti sono dati personali salvati solo in questo browser. Usa questi pulsanti
+      per conservarli o trasferirli: nessuna sincronizzazione automatica, nessun backend.
+    </p>
+    <div class="favorites-toolbar">
+      <button id="btnImportFavorites" class="btn-secondary">📥 Importa Preferiti</button>
+      <button id="btnExportFavoritesXlsx" class="btn-secondary">📊 Esporta Preferiti</button>
+      <button id="btnExportFavoritesTxt" class="btn-secondary">📄 Esporta Nomi</button>
+      <input type="file" id="favoritesImportInput" accept=".xlsx,.xls,.csv" class="hidden">
+    </div>
+    <div id="favoritesIoResult"></div>
     <div class="table-wrap" id="favoritesTableWrap"></div>
   </section>
 
@@ -176,6 +187,7 @@
 <script src="js/filters.js"></script>
 <script src="js/scouting.js"></script>
 <script src="js/importer.js"></script>
+<script src="js/favorites-io.js"></script>
 <script src="js/auction.js"></script>
 <script src="js/app.js"></script>
 </body>

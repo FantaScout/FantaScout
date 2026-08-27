@@ -25,6 +25,15 @@ modello matematico dei prezzi (stessi coefficienti, stessi numeri): li mostra so
 più onesto, con un'etichetta "⚠️ provvisorio" ovunque compaiano, perché sarebbero stati
 riprogettati nello Sprint 3.
 
+**Sprint 3C** ha aggiunto a ⭐ Preferiti tre funzioni, senza alcun backend: **📥 Importa
+Preferiti**, **📊 Esporta Preferiti** (.xlsx, fotografia completa dei dati attuali dei
+preferiti + foglio METADATA) e **📄 Esporta Nomi** (.txt, un nome per riga). L'import
+modifica **esclusivamente** il flag preferito dei giocatori riconosciuti nella base dati
+attuale (matching per ID stabile, poi Nome+Cognome — mai per squadra, perché il mercato è
+ancora aperto): non tocca mai anagrafica, quotazioni, indici o prezzi, che restano sempre
+quelli dell'ultimo listone importato. Mostra sempre un riepilogo (trovati/non trovati) senza
+bloccare l'import per i giocatori non più presenti nel listone.
+
 **Sprint 3** ha riprogettato **da zero** il motore di scouting/pricing (vedi punto 9): il
 vecchio modello trattava il Rating come se fosse su scala 6-9 invece che 0-100, producendo
 prezzi assurdi ("Lautaro → Prezzo Ideale 1137" con budget personale 500). Il nuovo motore
