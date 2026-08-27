@@ -104,10 +104,21 @@ main { padding: 16px; max-width: 1200px; margin: 0 auto; }
 }
 .filters .chip-toggle.on { background: var(--accent); color: white; border-color: var(--accent); }
 
-.table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+/* Lo scrolling (sia orizzontale che verticale) appartiene al CONTENITORE
+   della tabella, non alla pagina: altezza limitata alla viewport cosi'
+   la scrollbar orizzontale resta sempre raggiungibile subito sotto le
+   righe visibili, anche con centinaia di giocatori, senza dover scorrere
+   la pagina fino in fondo. L'header (sticky) resta visibile durante lo
+   scroll verticale interno. */
+.table-wrap {
+  overflow: auto;
+  max-height: calc(100vh - 230px);
+  min-height: 160px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+}
 table { border-collapse: collapse; width: 100%; font-size: 0.83rem; }
 th, td { padding: 8px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
-th { position: sticky; top: 0; background: var(--panel-2); cursor: pointer; user-select: none; font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); }
+th { position: sticky; top: 0; background: var(--panel-2); cursor: pointer; user-select: none; font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); z-index: 1; }
 th:hover { color: var(--text); }
 tbody tr:hover { background: var(--panel-2); }
 td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -295,4 +306,5 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   th, td { padding: 7px 6px; font-size: 0.78rem; }
   .dashboard-buttons, .settings-grid { grid-template-columns: 1fr 1fr; }
   .modal-content { padding: 14px; }
+  .table-wrap { max-height: calc(100vh - 300px); }
 }
