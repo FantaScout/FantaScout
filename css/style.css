@@ -207,6 +207,12 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .preview-sample-wrap table { font-size: 0.75rem; }
 .badge-missing { background: #4a2412; color: #ffb066; }
 
+.favorites-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+#favoritesIoResult { margin: 10px 0; font-size: 0.85rem; }
+#favoritesIoResult .err { color: var(--red); }
+#favoritesIoResult .ok { color: var(--green); }
+#favoritesIoResult .not-found-list { margin-top: 6px; line-height: 1.6; color: var(--text-dim); }
+
 /* Tap target minimi consigliati (mobile): pulsanti/star/checkbox almeno ~40px */
 .star-btn { min-width: 36px; min-height: 36px; font-size: 1.25rem; }
 .btn-tooltip { min-width: 28px; min-height: 28px; }
